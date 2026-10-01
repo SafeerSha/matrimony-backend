@@ -14,6 +14,7 @@ model User {
   role         String      @default("USER") // Since SQLite doesn't support Enums, we'll use a string and enforce it in code
   firstName    String?
   lastName     String?
+  isBanned     Boolean     @default(false)
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
   profile      Profile?
@@ -21,6 +22,7 @@ model User {
 
   sentConnections     Connection[] @relation("SentConnections")
   receivedConnections Connection[] @relation("ReceivedConnections")
+  photos              Photo[]
 }
 
 model Profile {
@@ -68,5 +70,17 @@ model Connection {
   receiver User @relation("ReceivedConnections", fields: [receiverId], references: [id], onDelete: Cascade)
 
   @@unique([senderId, receiverId])
+}
+
+model Photo {
+  id         String   @id @default(uuid())
+  userId     String
+  url        String
+  isPrimary  Boolean  @default(false)
+  isVerified Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
