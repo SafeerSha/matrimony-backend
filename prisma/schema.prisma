@@ -8,12 +8,47 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
+  id           String      @id @default(uuid())
+  email        String      @unique
   passwordHash String
-  role         String   @default("USER") // Since SQLite doesn't support Enums, we'll use a string and enforce it in code
+  role         String      @default("USER") // Since SQLite doesn't support Enums, we'll use a string and enforce it in code
   firstName    String?
   lastName     String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  profile      Profile?
+  preference   Preference?
+}
+
+model Profile {
+  id            String   @id @default(uuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dateOfBirth   DateTime?
+  gender        String?
+  bio           String?
+  religion      String?
+  caste         String?
+  education     String?
+  occupation    String?
+  height        Float?
+  maritalStatus String?
+  city          String?
+  country       String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Preference {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  minAge          Int?
+  maxAge          Int?
+  minHeight       Float?
+  maxHeight       Float?
+  religions       String?  // Stored as JSON string since SQLite lacks String[]
+  maritalStatuses String?  // Stored as JSON string since SQLite lacks String[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }
