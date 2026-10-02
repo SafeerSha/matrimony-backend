@@ -28,27 +28,49 @@ export class UsersService implements OnModuleInit {
   }
 
   async generateUniqueProfileId(): Promise<string> {
-    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    let profileId = '';
-    let exists = true;
-    while (exists) {
-      const letter = letters[Math.floor(Math.random() * letters.length)];
-      const count = await this.prisma.user.count();
-      const num = (count + 1).toString().padStart(5, '0');
-      profileId = `LT-${letter}${num}`;
+    const usersWithProfileId = await this.prisma.user.findMany({
+      where: {
+        profileId: {
+          startsWith: 'LT-',
+        },
+      },
+      select: { profileId: true },
+    });
 
-      const existing = await this.prisma.user.findUnique({
-        where: { profileId },
-      });
-      if (!existing) {
-        exists = false;
-      } else {
-        const randNum = Math.floor(10000 + Math.random() * 90000).toString();
-        profileId = `LT-${letter}${randNum}`;
-        const randExisting = await this.prisma.user.findUnique({ where: { profileId } });
-        if (!randExisting) exists = false;
+    let maxSequence = 0;
+    const regex = /^LT-([A-Z])(\d{5})$/;
+
+    for (const u of usersWithProfileId) {
+      if (!u.profileId) continue;
+      const match = u.profileId.match(regex);
+      if (match) {
+        const letter = match[1];
+        const num = parseInt(match[2], 10);
+        const letterIndex = letter.charCodeAt(0) - 65; // 'A' = 0, 'B' = 1, ...
+        const sequence = letterIndex * 99999 + num;
+        if (sequence > maxSequence) {
+          maxSequence = sequence;
+        }
       }
     }
+
+    let nextSequence = maxSequence + 1;
+
+    const formatProfileId = (seq: number): string => {
+      const adjusted = seq - 1;
+      const letterIndex = Math.floor(adjusted / 99999);
+      const num = (adjusted % 99999) + 1;
+      const letter = String.fromCharCode(65 + Math.min(letterIndex, 25));
+      return `LT-${letter}${num.toString().padStart(5, '0')}`;
+    };
+
+    let profileId = formatProfileId(nextSequence);
+
+    while (await this.prisma.user.findUnique({ where: { profileId } })) {
+      nextSequence++;
+      profileId = formatProfileId(nextSequence);
+    }
+
     return profileId;
   }
 
