@@ -52,7 +52,7 @@ export class AuthController {
   private setAuthCookies(res: Response, accessToken: string, refreshToken: string) {
     res.cookie('__Host-matrimony_session', accessToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: true, // Browser specification strictly requires Secure=true for __Host- prefix
       sameSite: 'lax',
       path: '/'
     });

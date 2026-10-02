@@ -11,11 +11,13 @@ export class DiscoveryController {
 
   @Get('search')
   async search(@Query() query: SearchQueryDto, @CurrentUser() user: any) {
-    return this.discoveryService.searchProfiles(query, user.sub);
+    const userId = user?.id || user?.sub;
+    return this.discoveryService.searchProfiles(query, userId);
   }
 
   @Get('recommendations')
   async recommendations(@CurrentUser() user: any) {
-    return this.discoveryService.getRecommendations(user.sub);
+    const userId = user?.id || user?.sub;
+    return this.discoveryService.getRecommendations(userId);
   }
 }
