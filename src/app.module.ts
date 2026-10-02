@@ -11,6 +11,7 @@ import { DiscoveryModule } from './discovery/discovery.module';
 import { ConnectionsModule } from './connections/connections.module';
 import { MediaModule } from './media/media.module';
 import { AdminModule } from './admin/admin.module';
+import { ChatModule } from './chat/chat.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { AdminModule } from './admin/admin.module';
     ConnectionsModule,
     MediaModule,
     AdminModule,
+    ChatModule,
   ],
 })
 export class AppModule {}
