@@ -21,7 +21,12 @@ export class ProfilesService {
     }
 
     return {
-      profile: user.profile || {},
+      ...(user.profile || {}),
+      profileId: user.profileId,
+      profile: {
+        ...(user.profile || {}),
+        profileId: user.profileId,
+      },
       preference: user.preference || {},
     };
   }
@@ -34,6 +39,7 @@ export class ProfilesService {
           select: {
             firstName: true,
             lastName: true,
+            profileId: true,
           }
         }
       }

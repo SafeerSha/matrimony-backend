@@ -14,6 +14,7 @@ model User {
   role         String      @default("USER") // Since SQLite doesn't support Enums, we'll use a string and enforce it in code
   firstName          String?
   lastName           String?
+  profileId          String?     @unique
   isBanned           Boolean     @default(false)
   hashedRefreshToken String?
   createdAt          DateTime    @default(now())
