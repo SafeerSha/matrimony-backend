@@ -20,12 +20,12 @@
     "prisma:studio": "prisma studio"
   },
   "dependencies": {
-    "@nestjs/common": "^11.1.6",
+    "@nestjs/common": "^12.1.2",
     "@nestjs/config": "^4.0.2",
-    "@nestjs/core": "^11.1.6",
+    "@nestjs/core": "^12.1.2",
     "@nestjs/jwt": "^11.0.0",
     "@nestjs/passport": "^12.0.0",
-    "@nestjs/platform-express": "^11.1.6",
+    "@nestjs/platform-express": "^12.1.2",
     "@nestjs/platform-socket.io": "^12.1.2",
     "@nestjs/serve-static": "^12.0.0",
     "@nestjs/swagger": "^11.2.0",
@@ -51,9 +51,9 @@
     "socket.io": "^4.8.4"
   },
   "devDependencies": {
-    "@nestjs/cli": "^11.0.10",
-    "@nestjs/schematics": "^11.0.7",
-    "@nestjs/testing": "^11.1.6",
+    "@nestjs/cli": "^12.0.0",
+    "@nestjs/schematics": "^12.0.0",
+    "@nestjs/testing": "^12.1.2",
     "@types/cookie-parser": "^1.4.10",
     "@types/express": "^5.0.3",
     "@types/jest": "^30.0.0",
@@ -86,5 +86,8 @@
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
+  },
+  "prisma": {
+    "seed": "ts-node prisma/seed.ts"
   }
 }
