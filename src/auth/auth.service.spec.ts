@@ -16,10 +16,14 @@ describe('AuthService', () => {
   const mockUsersService = {
     findByEmail: jest.fn(),
     create: jest.fn(),
+    updateRefreshToken: jest.fn(),
+    findById: jest.fn(),
+    clearRefreshToken: jest.fn(),
   };
 
   const mockJwt = {
     sign: jest.fn(),
+    signAsync: jest.fn().mockResolvedValue('token'),
   };
 
   beforeEach(async () => {

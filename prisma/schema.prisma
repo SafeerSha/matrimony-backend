@@ -12,12 +12,13 @@ model User {
   email        String      @unique
   passwordHash String
   role         String      @default("USER") // Since SQLite doesn't support Enums, we'll use a string and enforce it in code
-  firstName    String?
-  lastName     String?
-  isBanned     Boolean     @default(false)
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-  profile      Profile?
+  firstName          String?
+  lastName           String?
+  isBanned           Boolean     @default(false)
+  hashedRefreshToken String?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  profile            Profile?
   preference   Preference?
 
   sentConnections     Connection[] @relation("SentConnections")

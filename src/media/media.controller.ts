@@ -7,6 +7,7 @@ import { diskStorage } from 'multer';
 import * as crypto from 'crypto';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as fileType from 'file-type';
 
 const uploadPath = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadPath)) {
@@ -41,6 +42,17 @@ export class MediaController {
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }
+
+    // Validate magic bytes
+    const buffer = fs.readFileSync(file.path);
+    const type = await fileType.fromBuffer(buffer);
+
+    if (!type || !type.mime.match(/\/(jpg|jpeg|png|gif)$/)) {
+      // Delete the malicious file
+      fs.unlinkSync(file.path);
+      throw new BadRequestException('Invalid file type detected by magic bytes!');
+    }
+
     return this.mediaService.uploadPhoto(user.sub, file);
   }
 

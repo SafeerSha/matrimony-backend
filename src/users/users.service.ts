@@ -18,6 +18,12 @@ export class UsersService {
     });
   }
 
+  async findById(id: string) {
+    return this.prisma.user.findUnique({
+      where: { id },
+    });
+  }
+
   async create(data: CreateUserData) {
     return this.prisma.user.create({
       data: {
@@ -27,6 +33,20 @@ export class UsersService {
         lastName: data.lastName,
         role: 'USER', // Default role
       },
+    });
+  }
+
+  async updateRefreshToken(userId: string, hashedRefreshToken: string) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { hashedRefreshToken },
+    });
+  }
+
+  async clearRefreshToken(userId: string) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { hashedRefreshToken: null },
     });
   }
 }
