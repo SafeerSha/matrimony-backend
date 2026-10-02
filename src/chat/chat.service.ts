@@ -1,9 +1,13 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class ChatService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService
+  ) {}
 
   async sendMessage(senderId: string, receiverId: string, content: string) {
     const connection = await this.prisma.connection.findFirst({
@@ -20,13 +24,22 @@ export class ChatService {
       throw new ForbiddenException('You can only message users you have matched with.');
     }
 
-    return this.prisma.message.create({
+    const message = await this.prisma.message.create({
       data: {
         senderId,
         receiverId,
         content,
       },
     });
+
+    await this.notificationsService.createNotification(
+      receiverId,
+      'NEW_MESSAGE',
+      'You have a new message!',
+      message.id
+    );
+
+    return message;
   }
 
   async getChatHistory(userId: string, contactId: string) {

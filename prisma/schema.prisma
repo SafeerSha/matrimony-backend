@@ -25,6 +25,7 @@ model User {
   photos              Photo[]
   sentMessages        Message[]    @relation("SentMessages")
   receivedMessages    Message[]    @relation("ReceivedMessages")
+  notifications       Notification[]
 }
 
 model Profile {
@@ -97,5 +98,17 @@ model Message {
 
   sender   User @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
   receiver User @relation("ReceivedMessages", fields: [receiverId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id          String   @id @default(uuid())
+  userId      String
+  type        String   // NEW_INTEREST, MATCH_ACCEPTED, NEW_MESSAGE, SYSTEM
+  content     String
+  referenceId String?
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 

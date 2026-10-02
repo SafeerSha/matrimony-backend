@@ -12,6 +12,7 @@ import { ConnectionsModule } from './connections/connections.module';
 import { MediaModule } from './media/media.module';
 import { AdminModule } from './admin/admin.module';
 import { ChatModule } from './chat/chat.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { ChatModule } from './chat/chat.module';
     MediaModule,
     AdminModule,
     ChatModule,
+    NotificationsModule,
   ],
 })
 export class AppModule {}

@@ -1,9 +1,13 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class ConnectionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService
+  ) {}
 
   async sendInterest(senderId: string, receiverId: string) {
     if (senderId === receiverId) {
@@ -28,13 +32,22 @@ export class ConnectionsService {
       throw new BadRequestException('Connection already exists');
     }
 
-    return this.prisma.connection.create({
+    const connection = await this.prisma.connection.create({
       data: {
         senderId,
         receiverId,
         status: 'PENDING',
       },
     });
+
+    await this.notificationsService.createNotification(
+      receiverId,
+      'NEW_INTEREST',
+      'Someone sent you an interest!',
+      senderId
+    );
+
+    return connection;
   }
 
   async acceptInterest(receiverId: string, senderId: string) {
@@ -51,10 +64,19 @@ export class ConnectionsService {
       throw new NotFoundException('Connection request not found');
     }
 
-    return this.prisma.connection.update({
+    const updated = await this.prisma.connection.update({
       where: { id: connection.id },
       data: { status: 'ACCEPTED' },
     });
+
+    await this.notificationsService.createNotification(
+      senderId,
+      'MATCH_ACCEPTED',
+      'Your interest was accepted!',
+      receiverId
+    );
+
+    return updated;
   }
 
   async rejectInterest(receiverId: string, senderId: string) {
