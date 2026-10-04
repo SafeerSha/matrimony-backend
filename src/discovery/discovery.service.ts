@@ -33,33 +33,33 @@ export class DiscoveryService {
 
     if (query.religion || query.city || query.maritalStatus || query.minAge || query.maxAge) {
       whereClause.profile = {};
-      
+
       if (query.religion) {
         whereClause.profile.religion = { contains: query.religion };
       }
-      
+
       if (query.city) {
         whereClause.profile.city = { contains: query.city };
       }
-      
+
       if (query.maritalStatus) {
         whereClause.profile.maritalStatus = query.maritalStatus;
       }
-      
+
       if (query.minAge || query.maxAge) {
         const today = new Date();
         const dobFilter: any = {};
-        
+
         if (query.minAge) {
           const maxDate = new Date(today.getFullYear() - parseInt(query.minAge, 10), today.getMonth(), today.getDate());
           dobFilter.lte = maxDate;
         }
-        
+
         if (query.maxAge) {
           const minDate = new Date(today.getFullYear() - parseInt(query.maxAge, 10) - 1, today.getMonth(), today.getDate());
           dobFilter.gte = minDate;
         }
-        
+
         whereClause.profile.dateOfBirth = dobFilter;
       }
     }
@@ -69,15 +69,48 @@ export class DiscoveryService {
         where: whereClause,
         skip,
         take: limit,
-        include: { profile: true },
+        include: {
+          profile: true,
+          photos: {
+            where: { isVerified: true },
+            orderBy: { createdAt: 'desc' }
+          }
+        },
         orderBy: { createdAt: 'desc' }
       }),
       this.prisma.user.count({ where: whereClause })
     ]);
 
-    const sanitizedUsers = users.map(user => {
-      const { passwordHash, ...rest } = user;
-      return rest;
+    const EXTERNAL_PHOTO_BASE = 'https://i.pravatar.cc';
+
+    const sanitizedUsers = users.map((user, idx) => {
+      const { passwordHash, ...rest } = user as any;
+
+      let photos = (rest.photos || []).map((photo: any) => ({
+        id: photo.id,
+        url: photo.url,
+        isPrimary: photo.isPrimary,
+        isVerified: photo.isVerified,
+      }));
+
+      if (!photos.length) {
+        const seed = (rest.firstName || rest.email || rest.id || `user-${idx}`).toString();
+        const avatarUrl = `${EXTERNAL_PHOTO_BASE}/800?u=${encodeURIComponent(seed)}`;
+        photos = [
+          {
+            id: `external-${rest.id || idx}`,
+            url: avatarUrl,
+            isPrimary: true,
+            isVerified: false,
+            source: 'external'
+          }
+        ];
+      }
+
+      return {
+        ...rest,
+        photos,
+      };
     });
 
     return {
