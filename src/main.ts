@@ -18,6 +18,19 @@ async function bootstrap() {
     forbidNonWhitelisted: true,
     transform: true,
   }));
-  await app.listen(Number(process.env.PORT || 4000));
+
+  // Bind root '/' on http adapter so requests to either '/' or '/api/v1' succeed
+  const httpAdapter = app.getHttpAdapter();
+  httpAdapter.get('/', (req: any, res: any) => {
+    res.json({
+      name: 'Matrimony Backend API',
+      status: 'healthy',
+      version: '1.0.0',
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  const port = process.env.PORT || 4000;
+  await app.listen(port);
 }
 bootstrap();
