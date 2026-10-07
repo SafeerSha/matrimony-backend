@@ -4,7 +4,8 @@
   "private": true,
   "description": "Production-ready foundation for a Matrimony application backend",
   "scripts": {
-    "build": "nest build",
+    "build": "prisma generate && nest build",
+    "postinstall": "prisma generate",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
