@@ -29,5 +29,6 @@ services:
 databases:
   - name: matrimony-db
     plan: free
+    region: oregon
     databaseName: matrimony
     user: postgres
