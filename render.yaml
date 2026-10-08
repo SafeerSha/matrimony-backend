@@ -31,4 +31,3 @@ databases:
     plan: free
     region: oregon
     databaseName: matrimony
-    user: postgres
