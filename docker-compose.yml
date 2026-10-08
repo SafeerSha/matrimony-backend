@@ -19,6 +19,24 @@ services:
     volumes:
       - redis_data:/data
 
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      API_PREFIX: api/v1
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/matrimony
+      JWT_ACCESS_SECRET: dev-secret-key-12345678901234567890
+      JWT_ACCESS_EXPIRES_IN: 15m
+      CORS_ORIGINS: "*"
+    depends_on:
+      - postgres
+
 volumes:
   postgres_data:
   redis_data:

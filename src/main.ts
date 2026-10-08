@@ -9,8 +9,13 @@ async function bootstrap() {
   app.setGlobalPrefix(process.env.API_PREFIX || 'api/v1');
   app.use(helmet());
   app.use(cookieParser());
+  const allowedOrigins = process.env.CORS_ORIGINS;
   app.enableCors({
-    origin: (process.env.CORS_ORIGINS || 'http://localhost:3000').split(','),
+    origin: allowedOrigins
+      ? allowedOrigins === '*'
+        ? true
+        : allowedOrigins.split(',').map((o) => o.trim())
+      : ['http://localhost:3000'],
     credentials: true,
   });
   app.useGlobalPipes(new ValidationPipe({
@@ -30,7 +35,8 @@ async function bootstrap() {
     });
   });
 
-  const port = process.env.PORT || 4000;
-  await app.listen(port);
+  const port = Number(process.env.PORT || 4000);
+  await app.listen(port, '0.0.0.0');
+  console.log(`Application running on http://0.0.0.0:${port}/${process.env.API_PREFIX || 'api/v1'}`);
 }
 bootstrap();
