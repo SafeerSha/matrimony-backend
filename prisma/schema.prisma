@@ -9,59 +9,85 @@ datasource db {
 }
 
 model User {
-  id           String      @id @default(uuid())
-  email        String      @unique
-  passwordHash String
-  role         String      @default("USER") // Since SQLite doesn't support Enums, we'll use a string and enforce it in code
+  id                 String         @id @default(uuid())
+  email              String?        @unique
+  phone              String?        @unique
+  passwordHash       String?
+  isPhoneVerified    Boolean        @default(false)
+  isEmailVerified    Boolean        @default(false)
+  role               String         @default("USER") // 'USER', 'ADMIN', 'RM'
+  status             String         @default("DRAFT") // 'DRAFT', 'PENDING_VERIFICATION', 'ACTIVE', 'SUSPENDED'
   firstName          String?
   lastName           String?
-  profileId          String?     @unique
-  isBanned           Boolean     @default(false)
+  profileId          String?        @unique
+  isBanned           Boolean        @default(false)
   hashedRefreshToken String?
-  createdAt          DateTime    @default(now())
-  updatedAt          DateTime    @updatedAt
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
   profile            Profile?
-  preference   Preference?
+  preference         Preference?
 
-  sentConnections     Connection[] @relation("SentConnections")
-  receivedConnections Connection[] @relation("ReceivedConnections")
+  sentConnections     Connection[]   @relation("SentConnections")
+  receivedConnections Connection[]   @relation("ReceivedConnections")
   photos              Photo[]
-  sentMessages        Message[]    @relation("SentMessages")
-  receivedMessages    Message[]    @relation("ReceivedMessages")
+  sentMessages        Message[]      @relation("SentMessages")
+  receivedMessages    Message[]      @relation("ReceivedMessages")
   notifications       Notification[]
+  otpVerifications    OtpVerification[]
 }
 
 model Profile {
-  id            String   @id @default(uuid())
-  userId        String   @unique
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  dateOfBirth   DateTime?
-  gender        String?
-  bio           String?
-  religion      String?
-  caste         String?
-  education     String?
-  occupation    String?
-  height        Float?
-  maritalStatus String?
-  city          String?
-  country       String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id               String    @id @default(uuid())
+  userId           String    @unique
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  firstName        String?
+  lastName         String?
+  gender           String?
+  profileFor       String?
+  category         String?   @default("Marriage")
+  community        String?
+  lookingIn        String?
+  onboardingStep   Int       @default(1)
+  dateOfBirth      DateTime?
+  bio              String?
+  religion         String?
+  caste            String?
+  education        String?
+  occupation       String?
+  employmentStatus String?
+  annualIncome     String?
+  height           String?
+  maritalStatus    String?
+  city             String?
+  state            String?
+  country          String?
+  motherTongue     String?
+  family           String?
+  lifestyle        String[]  @default([])
+  interests        String[]  @default([])
+  lookingFor       String?
+  preferences      Json?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 }
 
 model Preference {
-  id              String   @id @default(uuid())
-  userId          String   @unique
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  minAge          Int?
-  maxAge          Int?
-  minHeight       Float?
-  maxHeight       Float?
-  religions       String?  // Stored as JSON string since SQLite lacks String[]
-  maritalStatuses String?  // Stored as JSON string since SQLite lacks String[]
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                 String   @id @default(uuid())
+  userId             String   @unique
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  minAge             Int?
+  maxAge             Int?
+  minHeight          String?
+  maxHeight          String?
+  religions          String?  // Stored as JSON string or comma-separated
+  maritalStatuses    String?  // Stored as JSON string or comma-separated
+  education          String?
+  occupations        String?  // Stored as JSON string or comma-separated
+  employmentStatuses String?  // Stored as JSON string or comma-separated
+  location           String?
+  diet               String?  // Stored as JSON string or comma-separated
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 }
 
 model Connection {
@@ -113,5 +139,23 @@ model Notification {
   createdAt   DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model OtpVerification {
+  id        String   @id @default(uuid())
+  userId    String?
+  phone     String?
+  email     String?
+  channel   String   @default("SMS")
+  codeHash  String
+  attempts  Int      @default(0)
+  consumed  Boolean  @default(false)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([phone, consumed, expiresAt])
+  @@index([email, consumed, expiresAt])
 }
 

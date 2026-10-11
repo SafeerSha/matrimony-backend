@@ -1,6 +1,57 @@
-import { IsDateString, IsNumber, IsOptional, IsPositive, IsString, MaxLength } from 'class-validator';
+import {
+  IsArray,
+  IsDateString,
+  IsEmail,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export class UpdateProfileDto {
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(5)
+  onboardingStep?: number;
+
+  @IsOptional()
+  @IsEmail({}, { message: 'A valid email address is required' })
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  firstName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  lastName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  profileFor?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  category?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  lookingIn?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  community?: string;
+
   @IsOptional()
   @IsDateString()
   dateOfBirth?: string;
@@ -12,37 +63,58 @@ export class UpdateProfileDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(500)
+  @MaxLength(1500)
   bio?: string;
 
   @IsOptional()
   @IsString()
-  @MaxLength(50)
+  @MaxLength(1500)
+  about?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
   religion?: string;
 
   @IsOptional()
   @IsString()
-  @MaxLength(50)
+  @MaxLength(100)
   caste?: string;
 
   @IsOptional()
   @IsString()
-  @MaxLength(100)
+  @MaxLength(255)
   education?: string;
 
   @IsOptional()
   @IsString()
-  @MaxLength(100)
+  @MaxLength(255)
   occupation?: string;
 
   @IsOptional()
-  @IsNumber()
-  @IsPositive()
-  height?: number;
+  @IsString()
+  @MaxLength(255)
+  profession?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(100)
+  employmentStatus?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  annualIncome?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => (value !== undefined && value !== null ? String(value).trim() : undefined))
+  @IsString()
   @MaxLength(50)
+  height?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
   maritalStatus?: string;
 
   @IsOptional()
@@ -53,5 +125,31 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsString()
   @MaxLength(100)
+  state?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
   country?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  motherTongue?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1500)
+  family?: string;
+
+  @IsOptional()
+  lifestyle?: any;
+
+  @IsOptional()
+  interests?: any;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1500)
+  lookingFor?: string;
 }

@@ -55,19 +55,89 @@ describe('DiscoveryService', () => {
       expect(result.meta.total).toBe(2);
       expect(result.meta.page).toBe(1);
     });
+    it('should filter by education, occupation, and employmentStatus', async () => {
+      const currentUserId = '1';
+      const query = new SearchQueryDto();
+      query.education = 'Bachelors';
+      query.profession = 'Engineer';
+      query.employmentStatus = 'Employed (Private / Corporate)';
+
+      mockPrisma.user.findMany.mockResolvedValue([]);
+      mockPrisma.user.count.mockResolvedValue(0);
+
+      await service.searchProfiles(query, currentUserId);
+
+      const findManyCall = mockPrisma.user.findMany.mock.calls[0][0];
+      const conditions = findManyCall.where.profile.AND;
+
+      expect(conditions).toEqual(
+        expect.arrayContaining([
+          { education: { contains: 'Bachelors', mode: 'insensitive' } },
+          { occupation: { contains: 'Engineer', mode: 'insensitive' } },
+          { employmentStatus: { equals: 'Employed (Private / Corporate)', mode: 'insensitive' } },
+        ]),
+      );
+    });
+
+    it('should support multi-select comma-separated filters', async () => {
+      const currentUserId = '1';
+      const query = new SearchQueryDto();
+      query.education = 'Bachelors, Masters';
+      query.employmentStatus = 'Student, Retired';
+
+      mockPrisma.user.findMany.mockResolvedValue([]);
+      mockPrisma.user.count.mockResolvedValue(0);
+
+      await service.searchProfiles(query, currentUserId);
+
+      const findManyCall = mockPrisma.user.findMany.mock.calls[0][0];
+      const conditions = findManyCall.where.profile.AND;
+
+      expect(conditions).toEqual(
+        expect.arrayContaining([
+          {
+            OR: [
+              { education: { contains: 'Bachelors', mode: 'insensitive' } },
+              { education: { contains: 'Masters', mode: 'insensitive' } },
+            ],
+          },
+          {
+            OR: [
+              { employmentStatus: { equals: 'Student', mode: 'insensitive' } },
+              { employmentStatus: { equals: 'Retired', mode: 'insensitive' } },
+            ],
+          },
+        ]),
+      );
+    });
   });
 
   describe('getRecommendations', () => {
-    it('should return recommended users based on preference', async () => {
+    it('should return recommended users based on preferences including education and occupation', async () => {
       const currentUserId = '1';
-      
-      mockPrisma.preference.findUnique.mockResolvedValue({ minAge: 20, maxAge: 30 });
+
+      mockPrisma.preference.findUnique.mockResolvedValue({
+        minAge: 22,
+        maxAge: 32,
+        education: 'Bachelors',
+        occupations: 'Doctor',
+        employmentStatuses: 'Employed (Private / Corporate)',
+      });
       mockPrisma.user.findMany.mockResolvedValue([{ id: '2', passwordHash: 'hash' }]);
       mockPrisma.user.count.mockResolvedValue(1);
 
       const result = await service.getRecommendations(currentUserId);
       expect(prisma.preference.findUnique).toHaveBeenCalledWith({ where: { userId: currentUserId } });
       expect(prisma.user.findMany).toHaveBeenCalled();
+      const findManyCall = mockPrisma.user.findMany.mock.calls[0][0];
+      const conditions = findManyCall.where.profile.AND;
+      expect(conditions).toEqual(
+        expect.arrayContaining([
+          { education: { contains: 'Bachelors', mode: 'insensitive' } },
+          { occupation: { contains: 'Doctor', mode: 'insensitive' } },
+          { employmentStatus: { equals: 'Employed (Private / Corporate)', mode: 'insensitive' } },
+        ]),
+      );
       expect(result.data.length).toBe(1);
     });
 

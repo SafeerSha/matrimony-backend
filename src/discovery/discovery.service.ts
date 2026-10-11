@@ -13,6 +13,7 @@ export class DiscoveryService {
 
     const whereClause: any = {
       id: { not: currentUserId },
+      status: 'ACTIVE',
       AND: [
         {
           NOT: {
@@ -31,37 +32,89 @@ export class DiscoveryService {
       ]
     };
 
-    if (query.religion || query.city || query.maritalStatus || query.minAge || query.maxAge) {
-      whereClause.profile = {};
+    const profileConditions: any[] = [];
 
-      if (query.religion) {
-        whereClause.profile.religion = { contains: query.religion };
+    if (query.religion) {
+      profileConditions.push({ religion: { contains: query.religion, mode: 'insensitive' } });
+    }
+
+    if (query.city) {
+      profileConditions.push({ city: { contains: query.city, mode: 'insensitive' } });
+    }
+
+    if (query.maritalStatus) {
+      profileConditions.push({ maritalStatus: { equals: query.maritalStatus, mode: 'insensitive' } });
+    }
+
+    const rawEducation = (query.education || query.educationLevel || '').trim();
+    if (rawEducation) {
+      const eduTerms = rawEducation.split(',').map((e) => e.trim()).filter(Boolean);
+      if (eduTerms.length === 1) {
+        profileConditions.push({
+          education: { contains: eduTerms[0], mode: 'insensitive' },
+        });
+      } else if (eduTerms.length > 1) {
+        profileConditions.push({
+          OR: eduTerms.map((term) => ({
+            education: { contains: term, mode: 'insensitive' },
+          })),
+        });
+      }
+    }
+
+    const rawOccupation = (query.occupation || query.profession || '').trim();
+    if (rawOccupation) {
+      const occTerms = rawOccupation.split(',').map((o) => o.trim()).filter(Boolean);
+      if (occTerms.length === 1) {
+        profileConditions.push({
+          occupation: { contains: occTerms[0], mode: 'insensitive' },
+        });
+      } else if (occTerms.length > 1) {
+        profileConditions.push({
+          OR: occTerms.map((term) => ({
+            occupation: { contains: term, mode: 'insensitive' },
+          })),
+        });
+      }
+    }
+
+    const rawEmployment = (query.employmentStatus || '').trim();
+    if (rawEmployment) {
+      const empTerms = rawEmployment.split(',').map((e) => e.trim()).filter(Boolean);
+      if (empTerms.length === 1) {
+        profileConditions.push({
+          employmentStatus: { equals: empTerms[0], mode: 'insensitive' },
+        });
+      } else if (empTerms.length > 1) {
+        profileConditions.push({
+          OR: empTerms.map((term) => ({
+            employmentStatus: { equals: term, mode: 'insensitive' },
+          })),
+        });
+      }
+    }
+
+    if (query.minAge || query.maxAge) {
+      const today = new Date();
+      const dobFilter: any = {};
+
+      if (query.minAge) {
+        const maxDate = new Date(today.getFullYear() - parseInt(query.minAge, 10), today.getMonth(), today.getDate());
+        dobFilter.lte = maxDate;
       }
 
-      if (query.city) {
-        whereClause.profile.city = { contains: query.city };
+      if (query.maxAge) {
+        const minDate = new Date(today.getFullYear() - parseInt(query.maxAge, 10) - 1, today.getMonth(), today.getDate());
+        dobFilter.gte = minDate;
       }
 
-      if (query.maritalStatus) {
-        whereClause.profile.maritalStatus = query.maritalStatus;
-      }
+      profileConditions.push({ dateOfBirth: dobFilter });
+    }
 
-      if (query.minAge || query.maxAge) {
-        const today = new Date();
-        const dobFilter: any = {};
-
-        if (query.minAge) {
-          const maxDate = new Date(today.getFullYear() - parseInt(query.minAge, 10), today.getMonth(), today.getDate());
-          dobFilter.lte = maxDate;
-        }
-
-        if (query.maxAge) {
-          const minDate = new Date(today.getFullYear() - parseInt(query.maxAge, 10) - 1, today.getMonth(), today.getDate());
-          dobFilter.gte = minDate;
-        }
-
-        whereClause.profile.dateOfBirth = dobFilter;
-      }
+    if (profileConditions.length > 0) {
+      whereClause.profile = {
+        AND: profileConditions,
+      };
     }
 
     const [users, total] = await Promise.all([
@@ -136,6 +189,9 @@ export class DiscoveryService {
     const query = new SearchQueryDto();
     if (userPref.minAge) query.minAge = userPref.minAge.toString();
     if (userPref.maxAge) query.maxAge = userPref.maxAge.toString();
+    if (userPref.education) query.education = userPref.education;
+    if (userPref.occupations) query.occupation = userPref.occupations;
+    if (userPref.employmentStatuses) query.employmentStatus = userPref.employmentStatuses;
     
     query.limit = '10';
     

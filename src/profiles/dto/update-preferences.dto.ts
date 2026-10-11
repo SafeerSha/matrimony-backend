@@ -1,4 +1,16 @@
-import { IsNumber, IsOptional, IsPositive, IsString, Max, Min, ValidateIf } from 'class-validator';
+import { IsNumber, IsOptional, Max, Min, ValidateIf } from 'class-validator';
+import { Transform } from 'class-transformer';
+
+export const transformToStringOrCsv = ({ value }: { value: any }) => {
+  if (value === undefined || value === null) return undefined;
+  if (Array.isArray(value)) return value.filter(Boolean).join(', ');
+  return String(value).trim();
+};
+
+export const transformHeightString = ({ value }: { value: any }) => {
+  if (value === undefined || value === null) return undefined;
+  return String(value).trim();
+};
 
 export class UpdatePreferencesDto {
   @IsOptional()
@@ -15,20 +27,43 @@ export class UpdatePreferencesDto {
   maxAge?: number;
 
   @IsOptional()
-  @IsNumber()
-  @IsPositive()
-  minHeight?: number;
+  @Transform(transformHeightString)
+  minHeight?: any;
 
   @IsOptional()
-  @IsNumber()
-  @IsPositive()
-  maxHeight?: number;
+  @Transform(transformHeightString)
+  maxHeight?: any;
 
   @IsOptional()
-  @IsString()
-  religions?: string; // Stored as comma-separated or JSON string
+  religions?: any;
 
   @IsOptional()
-  @IsString()
-  maritalStatuses?: string; // Stored as comma-separated or JSON string
+  religion?: any;
+
+  @IsOptional()
+  maritalStatuses?: any;
+
+  @IsOptional()
+  maritalStatus?: any;
+
+  @IsOptional()
+  education?: any;
+
+  @IsOptional()
+  occupations?: any;
+
+  @IsOptional()
+  professions?: any;
+
+  @IsOptional()
+  employmentStatuses?: any;
+
+  @IsOptional()
+  location?: any;
+
+  @IsOptional()
+  locations?: any;
+
+  @IsOptional()
+  diet?: any;
 }

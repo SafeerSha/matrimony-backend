@@ -28,4 +28,24 @@ export class SearchQueryDto {
   @IsOptional()
   @IsString()
   maritalStatus?: string;
+
+  @IsOptional()
+  @IsString()
+  education?: string;
+
+  @IsOptional()
+  @IsString()
+  educationLevel?: string;
+
+  @IsOptional()
+  @IsString()
+  occupation?: string;
+
+  @IsOptional()
+  @IsString()
+  profession?: string;
+
+  @IsOptional()
+  @IsString()
+  employmentStatus?: string;
 }

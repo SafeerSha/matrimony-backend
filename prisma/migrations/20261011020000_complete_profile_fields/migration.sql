@@ -1,0 +1,14 @@
+-- AlterTable Profile
+ALTER TABLE "Profile" ALTER COLUMN "height" TYPE TEXT USING "height"::TEXT;
+ALTER TABLE "Profile" ADD COLUMN IF NOT EXISTS "state" TEXT;
+ALTER TABLE "Profile" ADD COLUMN IF NOT EXISTS "motherTongue" TEXT;
+ALTER TABLE "Profile" ADD COLUMN IF NOT EXISTS "annualIncome" TEXT;
+ALTER TABLE "Profile" ADD COLUMN IF NOT EXISTS "family" TEXT;
+ALTER TABLE "Profile" ADD COLUMN IF NOT EXISTS "lifestyle" TEXT[] DEFAULT ARRAY[]::TEXT[];
+ALTER TABLE "Profile" ADD COLUMN IF NOT EXISTS "interests" TEXT[] DEFAULT ARRAY[]::TEXT[];
+ALTER TABLE "Profile" ADD COLUMN IF NOT EXISTS "lookingFor" TEXT;
+
+-- AlterTable Preference
+ALTER TABLE "Preference" ALTER COLUMN "minHeight" TYPE TEXT USING "minHeight"::TEXT;
+ALTER TABLE "Preference" ALTER COLUMN "maxHeight" TYPE TEXT USING "maxHeight"::TEXT;
+ALTER TABLE "Preference" ADD COLUMN IF NOT EXISTS "diet" TEXT;

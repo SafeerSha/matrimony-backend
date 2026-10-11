@@ -2,10 +2,13 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface CreateUserData {
-  email: string;
-  passwordHash: string;
+  email?: string;
+  passwordHash?: string;
+  phone?: string;
   firstName?: string;
   lastName?: string;
+  role?: string;
+  status?: string;
 }
 
 @Injectable()
@@ -75,8 +78,16 @@ export class UsersService implements OnModuleInit {
   }
 
   async findByEmail(email: string) {
+    if (!email) return null;
     return this.prisma.user.findUnique({
       where: { email },
+    });
+  }
+
+  async findByPhone(phone: string) {
+    if (!phone) return null;
+    return this.prisma.user.findUnique({
+      where: { phone },
     });
   }
 
@@ -91,11 +102,13 @@ export class UsersService implements OnModuleInit {
     return this.prisma.user.create({
       data: {
         email: data.email,
+        phone: data.phone,
         passwordHash: data.passwordHash,
         firstName: data.firstName,
         lastName: data.lastName,
         profileId,
-        role: 'USER', // Default role
+        role: data.role || 'USER',
+        status: data.status || 'DRAFT',
       },
     });
   }
@@ -112,5 +125,29 @@ export class UsersService implements OnModuleInit {
       where: { id: userId },
       data: { hashedRefreshToken: null },
     });
+  }
+
+  async cleanupStaleDrafts(olderThanDays: number = 60) {
+    const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
+    const staleDrafts = await this.prisma.user.findMany({
+      where: {
+        status: 'DRAFT',
+        createdAt: { lt: cutoff },
+      },
+      select: { id: true, email: true, createdAt: true },
+    });
+
+    const result = await this.prisma.user.deleteMany({
+      where: {
+        status: 'DRAFT',
+        createdAt: { lt: cutoff },
+      },
+    });
+
+    return {
+      purgedCount: result.count,
+      purgedUsers: staleDrafts,
+      cutoffDate: cutoff,
+    };
   }
 }

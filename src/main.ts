@@ -15,12 +15,12 @@ async function bootstrap() {
       ? allowedOrigins === '*'
         ? true
         : allowedOrigins.split(',').map((o) => o.trim())
-      : ['http://localhost:3000'],
+      : ['http://localhost:3001', 'http://localhost:3000'],
     credentials: true,
   });
   app.useGlobalPipes(new ValidationPipe({
     whitelist: true,
-    forbidNonWhitelisted: true,
+    forbidNonWhitelisted: false,
     transform: true,
   }));
 
