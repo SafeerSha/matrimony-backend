@@ -3,7 +3,10 @@ import { DiscoveryService } from './discovery.service';
 import { SearchQueryDto } from './dto/search-query.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 
+@ApiTags('Discovery')
+@ApiBearerAuth('JWT-auth')
 @Controller('discovery')
 @UseGuards(JwtAuthGuard)
 export class DiscoveryController {

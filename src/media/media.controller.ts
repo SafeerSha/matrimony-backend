@@ -20,6 +20,7 @@ import * as crypto from 'crypto';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as fileType from 'file-type';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 
 const uploadPath = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadPath)) {
@@ -54,6 +55,8 @@ async function validateMagicBytes(filePath: string): Promise<boolean> {
   }
 }
 
+@ApiTags('Media')
+@ApiBearerAuth('JWT-auth')
 @Controller('media')
 @UseGuards(JwtAuthGuard)
 export class MediaController {

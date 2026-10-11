@@ -1,6 +1,5 @@
 ---
 trigger: always_on
-name: testing-and-regression
 description: Requires risk-based automated testing, regression prevention, truthful test reporting, and verification of existing functionality during application changes.
 ---
 

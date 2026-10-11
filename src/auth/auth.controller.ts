@@ -11,6 +11,7 @@ import { VerifyRegistrationDto } from './dto/verify-registration.dto';
 import { SetPasswordDto } from './dto/set-password.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { JwtRefreshAuthGuard } from './guards/jwt-refresh-auth.guard';
+import { ApiTags } from '@nestjs/swagger';
 
 const isProd = process.env.NODE_ENV === 'production';
 const OTP_LIMIT = isProd ? 3 : 100;
@@ -20,6 +21,7 @@ const VERIFY_TTL = isProd ? 600000 : 60000;
 const LOGIN_LIMIT = isProd ? 5 : 100;
 const LOGIN_TTL = 60000;
 
+@ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}

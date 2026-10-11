@@ -2,7 +2,10 @@ import { Controller, Post, Get, Param, UseGuards, Query } from '@nestjs/common';
 import { ConnectionsService } from './connections.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 
+@ApiTags('Connections')
+@ApiBearerAuth('JWT-auth')
 @Controller('connections')
 @UseGuards(JwtAuthGuard)
 export class ConnectionsController {
