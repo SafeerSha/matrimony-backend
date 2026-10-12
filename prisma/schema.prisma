@@ -13,6 +13,8 @@ model User {
   email              String?        @unique
   phone              String?        @unique
   passwordHash       String?
+  isPasswordEnabled  Boolean        @default(false)
+  passwordChangedAt  DateTime?
   isPhoneVerified    Boolean        @default(false)
   isEmailVerified    Boolean        @default(false)
   role               String         @default("USER") // 'USER', 'ADMIN', 'RM'
@@ -34,6 +36,7 @@ model User {
   receivedMessages    Message[]      @relation("ReceivedMessages")
   notifications       Notification[]
   otpVerifications    OtpVerification[]
+  devices             UserDevice[]
 }
 
 model Profile {
@@ -157,5 +160,25 @@ model OtpVerification {
 
   @@index([phone, consumed, expiresAt])
   @@index([email, consumed, expiresAt])
+}
+
+model UserDevice {
+  id                 String   @id @default(uuid())
+  userId             String
+  sessionId          String   @unique
+  hashedRefreshToken String?
+  deviceName         String
+  deviceType         String   @default("DESKTOP") // "DESKTOP" | "MOBILE"
+  browser            String?
+  os                 String?
+  ipAddress          String?
+  location           String?
+  userAgent          String?
+  lastActiveAt       DateTime @default(now())
+  createdAt          DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 

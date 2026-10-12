@@ -120,7 +120,13 @@ All API endpoints are prefixed with `/api/v1`:
 - **POST `/api/v1/auth/verify-registration`**: Verify OTP and bind optional email address.
 - **POST `/api/v1/auth/register`**: Standard email + password registration.
 - **POST `/api/v1/auth/login`**: Sign in with email or phone number + password.
-- **POST `/api/v1/auth/set-password`**: Set or update user password *(Requires JWT)*.
+- **POST `/api/v1/auth/set-password`**: Set or update user password and enable password login *(Requires JWT)*.
+- **POST `/api/v1/auth/enable-password`**: Enable password login, optionally providing new password credentials *(Requires JWT)*.
+- **POST `/api/v1/auth/disable-password`**: Disable password login; OTP login remains active *(Requires JWT)*.
+- **GET `/api/v1/auth/password-status`**: Retrieve password enablement status, existence flag, and change timestamp *(Requires JWT)*.
+- **GET `/api/v1/auth/devices`**: Fetch all active login devices and sessions *(Requires JWT)*.
+- **POST `/api/v1/auth/devices/logout-others`**: Invalidate and disconnect all other logged-in devices *(Requires JWT)*.
+- **DELETE `/api/v1/auth/devices/:id`**: Revoke and disconnect a specific logged-in device *(Requires JWT)*.
 - **POST `/api/v1/auth/refresh`**: Rotate refresh tokens for fresh access tokens.
 - **POST `/api/v1/auth/logout`**: Terminate session and clear auth cookies *(Requires JWT)*.
 - **GET `/api/v1/auth/me`**: Get current authenticated user profile *(Requires JWT)*.
