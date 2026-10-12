@@ -1,7 +1,7 @@
 name: Ping Render
 on:
   schedule:
-    - cron: '*/12 * * * *' # Runs every 12 minutes
+    - cron: '*/1 * * * *' # Runs every 12 minutes
   workflow_dispatch:      # Lets you click "Run" manually to test it
 
 jobs:
