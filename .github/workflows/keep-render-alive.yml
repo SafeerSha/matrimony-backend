@@ -1,0 +1,66 @@
+name: Keep Render Backend Alive
+
+# GitHub Actions scheduled workflows may start late or be skipped during
+# periods of heavy load. Runs are best-effort, not exact timers.
+# Scheduled workflows always run from the default branch, so this file
+# must be merged into the default branch to be active.
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+# Prevent overlapping runs (queued runs execute sequentially instead).
+concurrency:
+  group: keep-render-alive
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ping-render:
+    # GitHub-hosted runner; independent of local development machines.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping backend health endpoint
+        env:
+          RENDER_BACKEND_URL: ${{ vars.RENDER_BACKEND_URL }}
+        run: |
+          set -euo pipefail
+
+          health_path="/api/v1/health"
+
+          if [ -z "$RENDER_BACKEND_URL" ]; then
+            echo "::error::RENDER_BACKEND_URL repository variable is not set. Add it under Settings -> Secrets and variables -> Actions -> Variables."
+            exit 1
+          fi
+
+          url="${RENDER_BACKEND_URL%/}${health_path}"
+          max_attempts=3
+          attempt=1
+
+          while [ "$attempt" -le "$max_attempts" ]; do
+            timestamp="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            curl_exit=0
+            http_code="$(curl -s -o /dev/null -w '%{http_code}' \
+              --connect-timeout 10 \
+              --max-time 30 \
+              -X GET \
+              "$url" 2>/dev/null)" || curl_exit=$?
+
+            if [ "$curl_exit" -eq 0 ] && [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+              echo "[$timestamp] GET ${url} -> HTTP ${http_code} (success)"
+              exit 0
+            fi
+
+            echo "[$timestamp] GET ${url} -> HTTP ${http_code:-none} (failure, attempt ${attempt}/${max_attempts})"
+            attempt=$((attempt + 1))
+            if [ "$attempt" -le "$max_attempts" ]; then
+              sleep 10
+            fi
+          done
+
+          echo "::error::Health check failed after ${max_attempts} attempts"
+          exit 1
