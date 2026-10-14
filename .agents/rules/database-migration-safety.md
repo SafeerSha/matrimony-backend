@@ -1,6 +1,5 @@
 ---
-trigger: always_on
-name: database-migration-safety
+trigger: model_decision
 description: Protects PostgreSQL data integrity and Prisma schema evolution through reviewed migrations, backward compatibility, recovery planning, and production-safe database operations.
 ---
 

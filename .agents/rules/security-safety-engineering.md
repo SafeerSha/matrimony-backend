@@ -1,6 +1,5 @@
 ---
-trigger: always_on
-name: security-safety-engineering
+trigger: model_decision
 description: Applies security-first engineering practices to authentication, authorization, privacy, input handling, uploads, API integrations, and sensitive operations.
 ---
 
