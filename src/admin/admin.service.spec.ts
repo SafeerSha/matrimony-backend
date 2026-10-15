@@ -1,14 +1,13 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AdminService } from './admin.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { STORAGE_SERVICE, StorageService } from '../storage/storage.service';
 import { NotFoundException } from '@nestjs/common';
-import * as fs from 'fs';
-
-jest.mock('fs');
 
 describe('AdminService', () => {
   let service: AdminService;
   let prisma: PrismaService;
+  let storageService: StorageService;
 
   const mockPrisma = {
     user: {
@@ -28,16 +27,23 @@ describe('AdminService', () => {
     },
   };
 
+  const mockStorageService = {
+    uploadFile: jest.fn(),
+    deleteFile: jest.fn(),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AdminService,
         { provide: PrismaService, useValue: mockPrisma },
+        { provide: STORAGE_SERVICE, useValue: mockStorageService },
       ],
     }).compile();
 
     service = module.get<AdminService>(AdminService);
     prisma = module.get<PrismaService>(PrismaService);
+    storageService = module.get<StorageService>(STORAGE_SERVICE);
   });
 
   afterEach(() => {
@@ -51,7 +57,11 @@ describe('AdminService', () => {
       mockPrisma.photo.count.mockResolvedValue(2);
 
       const result = await service.getStats();
-      expect(result).toEqual({ totalUsers: 10, totalMatches: 5, unverifiedPhotos: 2 });
+      expect(result).toEqual({
+        totalUsers: 10,
+        totalMatches: 5,
+        unverifiedPhotos: 2,
+      });
     });
   });
 
@@ -79,14 +89,25 @@ describe('AdminService', () => {
       expect(result).toEqual({ id: 'p1', isVerified: true });
     });
 
-    it('should reject and delete photo', async () => {
-      mockPrisma.photo.findUnique.mockResolvedValue({ id: 'p1', url: '/uploads/test.jpg' });
+    it('should reject and delete photo via storage service', async () => {
+      mockPrisma.photo.findUnique.mockResolvedValue({
+        id: 'p1',
+        url: 'https://media.test.com/uploads/users/u1/test.jpg',
+        objectKey: 'uploads/users/u1/test.jpg',
+        storageProvider: 'r2',
+      });
       mockPrisma.photo.delete.mockResolvedValue({ id: 'p1' });
-      (fs.existsSync as jest.Mock).mockReturnValue(true);
 
       const result = await service.verifyPhoto('p1', 'rejected');
       expect((result as any).success).toBe(true);
-      expect(fs.unlinkSync).toHaveBeenCalled();
+      expect(mockPrisma.photo.delete).toHaveBeenCalledWith({
+        where: { id: 'p1' },
+      });
+      expect(mockStorageService.deleteFile).toHaveBeenCalledWith({
+        url: 'https://media.test.com/uploads/users/u1/test.jpg',
+        objectKey: 'uploads/users/u1/test.jpg',
+        storageProvider: 'r2',
+      });
     });
   });
 });

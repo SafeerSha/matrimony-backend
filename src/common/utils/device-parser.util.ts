@@ -15,7 +15,7 @@ export function parseUserAgentAndHeaders(
   const ua = userAgentHeader || '';
 
   // 1. Detect App vs Browser
-  const isApp = ua.includes('ShaadiChat') || ua.includes('MatrimonyApp');
+  const isApp = ua.includes('IshtamChat') || ua.includes('MatrimonyApp');
 
   // 2. Detect OS
   let os = 'Unknown OS';
@@ -38,7 +38,7 @@ export function parseUserAgentAndHeaders(
   // 3. Detect Browser
   let browser = 'Browser';
   if (isApp) {
-    browser = 'ShaadiChat App';
+    browser = 'IshtamChat App';
   } else if (/Edg\//i.test(ua)) {
     browser = 'Edge';
   } else if (/Chrome\//i.test(ua) && !/Chromium\//i.test(ua)) {
@@ -58,7 +58,7 @@ export function parseUserAgentAndHeaders(
   // 5. Construct Friendly Device Name
   let deviceName: string;
   if (isApp) {
-    deviceName = `ShaadiChat ${os} Mobile App`;
+    deviceName = `IshtamChat ${os} Mobile App`;
   } else if (isMobile) {
     if (/iPhone/i.test(ua)) {
       deviceName = `Safari on iPhone (${os})`;

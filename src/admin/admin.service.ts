@@ -1,11 +1,13 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import * as fs from 'fs';
-import * as path from 'path';
+import { STORAGE_SERVICE, StorageService } from '../storage/storage.service';
 
 @Injectable()
 export class AdminService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(STORAGE_SERVICE) private readonly storageService: StorageService,
+  ) {}
 
   async getUsers(page: number = 1, limit: number = 20) {
     const skip = (page - 1) * limit;
@@ -18,12 +20,12 @@ export class AdminService {
           profile: true,
           photos: true,
         },
-        orderBy: { createdAt: 'desc' }
+        orderBy: { createdAt: 'desc' },
       }),
-      this.prisma.user.count()
+      this.prisma.user.count(),
     ]);
 
-    const sanitizedUsers = users.map(user => {
+    const sanitizedUsers = users.map((user) => {
       const { passwordHash, ...rest } = user;
       return rest;
     });
@@ -34,8 +36,8 @@ export class AdminService {
         total,
         page,
         limit,
-        totalPages: Math.ceil(total / limit)
-      }
+        totalPages: Math.ceil(total / limit),
+      },
     };
   }
 
@@ -62,12 +64,14 @@ export class AdminService {
     return this.prisma.user.update({
       where: { id: userId },
       data: { isBanned: true },
-      select: { id: true, email: true, isBanned: true }
+      select: { id: true, email: true, isBanned: true },
     });
   }
 
   async verifyPhoto(photoId: string, status: 'approved' | 'rejected') {
-    const photo = await this.prisma.photo.findUnique({ where: { id: photoId } });
+    const photo = await this.prisma.photo.findUnique({
+      where: { id: photoId },
+    });
     if (!photo) {
       throw new NotFoundException('Photo not found');
     }
@@ -78,17 +82,16 @@ export class AdminService {
         data: { isVerified: true },
       });
     } else {
-      // For rejected, delete the photo
+      // For rejected, delete the photo from DB
       await this.prisma.photo.delete({ where: { id: photoId } });
-      
-      // Also delete from physical disk
-      const filename = photo.url.replace('/uploads/', '');
-      const filePath = path.join(process.cwd(), 'uploads', filename);
-      
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-      
+
+      // Delete from storage abstraction
+      await this.storageService.deleteFile({
+        url: photo.url,
+        objectKey: photo.objectKey,
+        storageProvider: photo.storageProvider,
+      });
+
       return { success: true, message: 'Photo rejected and deleted' };
     }
   }

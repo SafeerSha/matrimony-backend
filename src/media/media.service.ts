@@ -1,11 +1,22 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import * as fs from 'fs';
-import * as path from 'path';
+import {
+  STORAGE_SERVICE,
+  StorageService,
+  StorageUploadResult,
+} from '../storage/storage.service';
 
 @Injectable()
 export class MediaService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(STORAGE_SERVICE) private readonly storageService: StorageService,
+  ) {}
 
   async uploadPhoto(userId: string, file: Express.Multer.File) {
     const existingPhotosCount = await this.prisma.photo.count({
@@ -13,26 +24,32 @@ export class MediaService {
     });
 
     if (existingPhotosCount >= 5) {
-      if (file?.path && fs.existsSync(file.path)) {
-        try {
-          fs.unlinkSync(file.path);
-        } catch {
-          // ignore error
-        }
-      }
-      throw new BadRequestException('Maximum of 5 photos allowed per user. Please delete an existing photo to upload a new one.');
+      throw new BadRequestException(
+        'Maximum of 5 photos allowed per user. Please delete an existing photo to upload a new one.',
+      );
     }
 
-    const url = `/uploads/${file.filename}`;
+    const uploadResult = await this.storageService.uploadFile(file, userId);
     const isPrimary = existingPhotosCount === 0;
 
-    return this.prisma.photo.create({
-      data: {
-        userId,
-        url,
-        isPrimary,
-      },
-    });
+    try {
+      return await this.prisma.photo.create({
+        data: {
+          userId,
+          url: uploadResult.url,
+          objectKey: uploadResult.objectKey,
+          storageProvider: uploadResult.storageProvider,
+          isPrimary,
+        },
+      });
+    } catch (err) {
+      try {
+        await this.storageService.deleteFile(uploadResult);
+      } catch {
+        // ignore rollback deletion error
+      }
+      throw err;
+    }
   }
 
   async uploadMultiplePhotos(userId: string, files: Express.Multer.File[]) {
@@ -45,41 +62,51 @@ export class MediaService {
     });
 
     if (existingPhotosCount + files.length > 5) {
-      files.forEach((file) => {
-        if (file?.path && fs.existsSync(file.path)) {
-          try {
-            fs.unlinkSync(file.path);
-          } catch {
-            // ignore
-          }
-        }
-      });
       throw new BadRequestException(
         `Maximum of 5 photos allowed per user. You currently have ${existingPhotosCount} photo(s) and cannot upload ${files.length} more.`,
       );
     }
 
     const createdPhotos = [];
+    const uploadedResults: StorageUploadResult[] = [];
     let hasPrimary = existingPhotosCount > 0;
 
-    for (const file of files) {
-      const url = `/uploads/${file.filename}`;
-      const isPrimary = !hasPrimary;
-      if (isPrimary) {
-        hasPrimary = true;
+    try {
+      for (const file of files) {
+        const uploadResult = await this.storageService.uploadFile(file, userId);
+        uploadedResults.push(uploadResult);
+
+        const isPrimary = !hasPrimary;
+        if (isPrimary) {
+          hasPrimary = true;
+        }
+
+        const photo = await this.prisma.photo.create({
+          data: {
+            userId,
+            url: uploadResult.url,
+            objectKey: uploadResult.objectKey,
+            storageProvider: uploadResult.storageProvider,
+            isPrimary,
+          },
+        });
+        createdPhotos.push(photo);
       }
 
-      const photo = await this.prisma.photo.create({
-        data: {
-          userId,
-          url,
-          isPrimary,
-        },
-      });
-      createdPhotos.push(photo);
+      return createdPhotos;
+    } catch (err) {
+      for (const uploaded of uploadedResults) {
+        const alreadyCreated = createdPhotos.find((p) => p.url === uploaded.url);
+        if (!alreadyCreated) {
+          try {
+            await this.storageService.deleteFile(uploaded);
+          } catch {
+            // ignore
+          }
+        }
+      }
+      throw err;
     }
-
-    return createdPhotos;
   }
 
   async setPrimaryPhoto(userId: string, photoId: string) {
@@ -119,17 +146,12 @@ export class MediaService {
     // Delete from DB
     await this.prisma.photo.delete({ where: { id: photoId } });
 
-    // Delete physical file
-    const filename = photo.url.replace('/uploads/', '');
-    const filePath = path.join(process.cwd(), 'uploads', filename);
-
-    if (fs.existsSync(filePath)) {
-      try {
-        fs.unlinkSync(filePath);
-      } catch {
-        // ignore
-      }
-    }
+    // Delete from storage (handles both R2 and local)
+    await this.storageService.deleteFile({
+      url: photo.url,
+      objectKey: photo.objectKey,
+      storageProvider: photo.storageProvider,
+    });
 
     // If deleted photo was primary, promote the most recent remaining photo to primary
     if (photo.isPrimary) {
