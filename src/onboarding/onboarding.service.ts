@@ -113,7 +113,7 @@ export class OnboardingService {
       await this.notificationsService.createNotification(
         userId,
         'SYSTEM',
-        'Welcome to ShaadiChat! Your profile is now active and live. Start connecting with compatible partners today!',
+        'Welcome to IshtamChat! Your profile is now active and live. Start connecting with compatible partners today!',
       );
     } catch {
       // Safe failure: notification logging error should not block profile activation

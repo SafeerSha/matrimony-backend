@@ -15,36 +15,29 @@ import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { MediaService } from './media.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { diskStorage } from 'multer';
-import * as crypto from 'crypto';
-import * as path from 'path';
-import * as fs from 'fs';
+import { memoryStorage } from 'multer';
 import * as fileType from 'file-type';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 
-const uploadPath = path.join(process.cwd(), 'uploads');
-if (!fs.existsSync(uploadPath)) {
-  fs.mkdirSync(uploadPath, { recursive: true });
-}
-
-const multerStorage = diskStorage({
-  destination: './uploads',
-  filename: (req, file, cb) => {
-    const uniqueSuffix = crypto.randomUUID() + path.extname(file.originalname);
-    cb(null, uniqueSuffix);
-  },
-});
+const multerStorage = memoryStorage();
 
 const imageFileFilter = (req: any, file: any, cb: any) => {
   if (!file.mimetype.match(/\/(jpg|jpeg|png|gif|webp)$/i)) {
-    return cb(new BadRequestException('Only image files (jpg, jpeg, png, gif, webp) are allowed!'), false);
+    return cb(
+      new BadRequestException(
+        'Only image files (jpg, jpeg, png, gif, webp) are allowed!',
+      ),
+      false,
+    );
   }
   cb(null, true);
 };
 
-async function validateMagicBytes(filePath: string): Promise<boolean> {
+async function validateMagicBytes(buffer: Buffer): Promise<boolean> {
   try {
-    const buffer = fs.readFileSync(filePath);
+    if (!buffer || buffer.length === 0) {
+      return false;
+    }
     const type = await fileType.fromBuffer(buffer);
     if (!type || !type.mime.match(/\/(jpg|jpeg|png|gif|webp)$/i)) {
       return false;
@@ -72,20 +65,16 @@ export class MediaController {
       },
     }),
   )
-  async uploadPhoto(@CurrentUser() user: any, @UploadedFile() file: Express.Multer.File) {
+  async uploadPhoto(
+    @CurrentUser() user: any,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }
 
-    const isValid = await validateMagicBytes(file.path);
+    const isValid = await validateMagicBytes(file.buffer);
     if (!isValid) {
-      if (fs.existsSync(file.path)) {
-        try {
-          fs.unlinkSync(file.path);
-        } catch {
-          // ignore
-        }
-      }
       throw new BadRequestException('Invalid file type detected by magic bytes!');
     }
 
@@ -112,19 +101,11 @@ export class MediaController {
 
     // Validate magic bytes for all uploaded files
     for (const file of files) {
-      const isValid = await validateMagicBytes(file.path);
+      const isValid = await validateMagicBytes(file.buffer);
       if (!isValid) {
-        // Clean up all uploaded files
-        files.forEach((f) => {
-          if (fs.existsSync(f.path)) {
-            try {
-              fs.unlinkSync(f.path);
-            } catch {
-              // ignore
-            }
-          }
-        });
-        throw new BadRequestException('Invalid file type detected by magic bytes in one or more uploaded files!');
+        throw new BadRequestException(
+          'Invalid file type detected by magic bytes in one or more uploaded files!',
+        );
       }
     }
 
