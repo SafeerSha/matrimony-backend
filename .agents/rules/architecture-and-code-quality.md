@@ -1,6 +1,5 @@
 ---
-trigger: always_on
-name: architecture-and-code-quality
+trigger: model_decision
 description: Preserves existing Next.js and NestJS architecture, modularity, dependency management, maintainability, and established coding conventions.
 ---
 

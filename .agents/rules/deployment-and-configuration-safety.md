@@ -1,6 +1,5 @@
 ---
-trigger: always_on
-name: deployment-and-configuration-safety
+trigger: model_decision
 description: Protects production deployments, environment configuration, CI/CD workflows, application startup, database migration sequencing, and recovery procedures.
 ---
 
