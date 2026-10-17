@@ -16,10 +16,12 @@ describe('ChatService', () => {
     },
     message: {
       create: jest.fn(),
+      findFirst: jest.fn(),
       findMany: jest.fn(),
       findFirst: jest.fn(),
       count: jest.fn(),
       updateMany: jest.fn(),
+      count: jest.fn(),
     },
   };
 
@@ -196,4 +198,84 @@ describe('ChatService', () => {
       expect(conv.updatedAt).toEqual(new Date('2026-01-02T10:00:00Z'));
     });
   });
+
+  describe('initiateChat', () => {
+    it('should successfully initialize chat when mutual match exists', async () => {
+      const mockConn = {
+        id: 'conn-1',
+        senderId: 'user-1',
+        receiverId: 'user-2',
+        status: 'ACCEPTED',
+        createdAt: new Date(),
+        sender: { id: 'user-1', firstName: 'John', lastName: 'Doe', profile: {} },
+        receiver: {
+          id: 'user-2',
+          firstName: 'Jane',
+          lastName: 'Smith',
+          photos: [{ url: 'https://test.com/photo.jpg', isPrimary: true }],
+          profile: { city: 'Mumbai', occupation: 'Designer' },
+        },
+      };
+
+      mockPrisma.connection.findFirst.mockResolvedValue(mockConn);
+      mockPrisma.message.findFirst.mockResolvedValue(null);
+
+      const result = await service.initiateChat('user-1', 'user-2');
+      expect(result.success).toBe(true);
+      expect(result.conversationId).toBe('conv-user-2');
+      expect(result.contactId).toBe('user-2');
+      expect(result.partner.name).toBe('Jane Smith');
+      expect(result.partner.photo).toBe('https://test.com/photo.jpg');
+    });
+
+    it('should throw ForbiddenException if users are not matched', async () => {
+      mockPrisma.connection.findFirst.mockResolvedValue(null);
+      await expect(service.initiateChat('user-1', 'user-unmatched')).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should throw ForbiddenException if initiating chat with oneself', async () => {
+      await expect(service.initiateChat('user-1', 'user-1')).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe('getConversations', () => {
+    it('should return list of conversations for accepted matches', async () => {
+      const mockConnections = [
+        {
+          id: 'conn-1',
+          senderId: 'user-1',
+          receiverId: 'user-2',
+          status: 'ACCEPTED',
+          updatedAt: new Date(),
+          sender: { id: 'user-1', firstName: 'John' },
+          receiver: {
+            id: 'user-2',
+            firstName: 'Jane',
+            lastName: 'Smith',
+            profile: { city: 'Delhi' },
+            photos: [{ url: 'https://test.com/jane.jpg' }],
+          },
+        },
+      ];
+
+      mockPrisma.connection.findMany.mockResolvedValue(mockConnections);
+      mockPrisma.message.findFirst.mockResolvedValue({
+        id: 'msg-1',
+        senderId: 'user-2',
+        receiverId: 'user-1',
+        content: 'Hi there!',
+        createdAt: new Date(),
+        isRead: false,
+      });
+      mockPrisma.message.count.mockResolvedValue(1);
+
+      const convos = await service.getConversations('user-1');
+      expect(convos).toHaveLength(1);
+      expect(convos[0].id).toBe('conv-user-2');
+      expect(convos[0].participant.name).toBe('Jane Smith');
+      expect(convos[0].unreadCount).toBe(1);
+      expect(convos[0].lastMessage?.content).toBe('Hi there!');
+    });
+  });
 });
+

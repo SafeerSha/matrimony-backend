@@ -264,4 +264,168 @@ export class ChatService {
 
     return { success: true };
   }
+
+  async initiateChat(userId: string, contactId: string) {
+    if (userId === contactId) {
+      throw new ForbiddenException('Cannot initiate chat with yourself.');
+    }
+
+    const connection = await this.prisma.connection.findFirst({
+      where: {
+        status: 'ACCEPTED',
+        OR: [
+          { senderId: userId, receiverId: contactId },
+          { senderId: contactId, receiverId: userId },
+        ],
+      },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            profile: true,
+            photos: { select: { url: true, isPrimary: true, isVerified: true } },
+          },
+        },
+        receiver: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            profile: true,
+            photos: { select: { url: true, isPrimary: true, isVerified: true } },
+          },
+        },
+      },
+    });
+
+    if (!connection) {
+      throw new ForbiddenException('You can only message users you have matched with.');
+    }
+
+    const partner = connection.senderId === userId ? connection.receiver : connection.sender;
+
+    const lastMessage = await this.prisma.message.findFirst({
+      where: {
+        OR: [
+          { senderId: userId, receiverId: contactId },
+          { senderId: contactId, receiverId: userId },
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return {
+      success: true,
+      conversationId: `conv-${partner.id}`,
+      contactId: partner.id,
+      partner: {
+        id: partner.id,
+        name: `${partner.firstName || ''} ${partner.lastName || ''}`.trim() || 'Match',
+        photo: partner.photos?.[0]?.url || null,
+        bio: partner.profile?.bio || null,
+        city: partner.profile?.city || null,
+        occupation: partner.profile?.occupation || null,
+      },
+      lastMessage: lastMessage
+        ? {
+            id: lastMessage.id,
+            conversationId: `conv-${partner.id}`,
+            senderId: lastMessage.senderId,
+            receiverId: lastMessage.receiverId,
+            content: lastMessage.content,
+            createdAt: lastMessage.createdAt.toISOString(),
+            isRead: lastMessage.isRead,
+          }
+        : null,
+      message: 'Conversation initialized successfully',
+    };
+  }
+
+  async getConversations(userId: string) {
+    const connections = await this.prisma.connection.findMany({
+      where: {
+        status: 'ACCEPTED',
+        OR: [{ senderId: userId }, { receiverId: userId }],
+      },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            profile: true,
+            photos: { select: { url: true, isPrimary: true, isVerified: true } },
+          },
+        },
+        receiver: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            profile: true,
+            photos: { select: { url: true, isPrimary: true, isVerified: true } },
+          },
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    const conversations = await Promise.all(
+      connections.map(async (c: any) => {
+        const partner = c.senderId === userId ? c.receiver : c.sender;
+        const lastMessage = await this.prisma.message.findFirst({
+          where: {
+            OR: [
+              { senderId: userId, receiverId: partner.id },
+              { senderId: partner.id, receiverId: userId },
+            ],
+          },
+          orderBy: { createdAt: 'desc' },
+        });
+
+        const unreadCount = await this.prisma.message.count({
+          where: {
+            senderId: partner.id,
+            receiverId: userId,
+            isRead: false,
+          },
+        });
+
+        return {
+          id: `conv-${partner.id}`,
+          participantId: partner.id,
+          participant: {
+            id: partner.id,
+            name: `${partner.firstName || ''} ${partner.lastName || ''}`.trim() || 'Match',
+            firstName: partner.firstName,
+            lastName: partner.lastName,
+            city: partner.profile?.city,
+            country: partner.profile?.country,
+            occupation: partner.profile?.occupation,
+            education: partner.profile?.education,
+            bio: partner.profile?.bio,
+            isVerified: true,
+            photos: partner.photos || [],
+          },
+          lastMessage: lastMessage
+            ? {
+                id: lastMessage.id,
+                conversationId: `conv-${partner.id}`,
+                senderId: lastMessage.senderId,
+                receiverId: lastMessage.receiverId,
+                content: lastMessage.content,
+                createdAt: lastMessage.createdAt.toISOString(),
+                isRead: lastMessage.isRead,
+              }
+            : undefined,
+          unreadCount,
+          updatedAt: (lastMessage?.createdAt || c.updatedAt).toISOString(),
+        };
+      })
+    );
+
+    return conversations;
+  }
 }

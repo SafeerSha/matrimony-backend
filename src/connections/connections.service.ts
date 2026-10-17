@@ -29,6 +29,48 @@ export class ConnectionsService {
     });
 
     if (existing) {
+      if (existing.senderId === receiverId && existing.receiverId === senderId && existing.status === 'PENDING') {
+        const accepted = await this.prisma.connection.update({
+          where: { id: existing.id },
+          data: { status: 'ACCEPTED' },
+          include: {
+            sender: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                profileId: true,
+                profile: true,
+                photos: { select: { url: true, isPrimary: true, isVerified: true } },
+              },
+            },
+            receiver: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                profileId: true,
+                profile: true,
+                photos: { select: { url: true, isPrimary: true, isVerified: true } },
+              },
+            },
+          },
+        });
+
+        await this.notificationsService.createNotification(
+          receiverId,
+          'MATCH_ACCEPTED',
+          'Your interest was accepted! You have a mutual match.',
+          senderId
+        );
+
+        return {
+          ...accepted,
+          isMutualMatch: true,
+          partner: accepted.senderId === senderId ? accepted.receiver : accepted.sender,
+        };
+      }
+
       throw new BadRequestException('Connection already exists');
     }
 
@@ -37,6 +79,18 @@ export class ConnectionsService {
         senderId,
         receiverId,
         status: 'PENDING',
+      },
+      include: {
+        receiver: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            profileId: true,
+            profile: true,
+            photos: { select: { url: true, isPrimary: true, isVerified: true } },
+          },
+        },
       },
     });
 
@@ -47,7 +101,10 @@ export class ConnectionsService {
       senderId
     );
 
-    return connection;
+    return {
+      ...connection,
+      isMutualMatch: false,
+    };
   }
 
   async acceptInterest(receiverId: string, senderId: string) {
@@ -67,16 +124,42 @@ export class ConnectionsService {
     const updated = await this.prisma.connection.update({
       where: { id: connection.id },
       data: { status: 'ACCEPTED' },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            profileId: true,
+            profile: true,
+            photos: { select: { url: true, isPrimary: true, isVerified: true } },
+          },
+        },
+        receiver: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            profileId: true,
+            profile: true,
+            photos: { select: { url: true, isPrimary: true, isVerified: true } },
+          },
+        },
+      },
     });
 
     await this.notificationsService.createNotification(
       senderId,
       'MATCH_ACCEPTED',
-      'Your interest was accepted!',
+      'Your interest was accepted! You have a mutual match.',
       receiverId
     );
 
-    return updated;
+    return {
+      ...updated,
+      isMutualMatch: true,
+      partner: updated.senderId === receiverId ? updated.receiver : updated.sender,
+    };
   }
 
   async rejectInterest(receiverId: string, senderId: string) {
@@ -125,15 +208,39 @@ export class ConnectionsService {
       case 'sent':
         return this.prisma.connection.findMany({
           where: { senderId: userId },
-          include: { receiver: { select: { id: true, firstName: true, lastName: true, profile: true } } },
+          include: {
+            receiver: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                profileId: true,
+                profile: true,
+                photos: { select: { url: true, isPrimary: true, isVerified: true } },
+              },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
         });
       case 'received':
         return this.prisma.connection.findMany({
           where: { receiverId: userId, status: 'PENDING' },
-          include: { sender: { select: { id: true, firstName: true, lastName: true, profile: true } } },
+          include: {
+            sender: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                profileId: true,
+                profile: true,
+                photos: { select: { url: true, isPrimary: true, isVerified: true } },
+              },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
         });
-      case 'matches':
-        return this.prisma.connection.findMany({
+      case 'matches': {
+        const matches = await this.prisma.connection.findMany({
           where: {
             status: 'ACCEPTED',
             OR: [
@@ -142,10 +249,40 @@ export class ConnectionsService {
             ],
           },
           include: {
-            sender: { select: { id: true, firstName: true, lastName: true, profile: true } },
-            receiver: { select: { id: true, firstName: true, lastName: true, profile: true } },
+            sender: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                profileId: true,
+                profile: true,
+                photos: { select: { url: true, isPrimary: true, isVerified: true } },
+              },
+            },
+            receiver: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                profileId: true,
+                profile: true,
+                photos: { select: { url: true, isPrimary: true, isVerified: true } },
+              },
+            },
           },
+          orderBy: { updatedAt: 'desc' },
         });
+
+        return matches.map((m: any) => {
+          const isSender = m.senderId === userId;
+          const partner = isSender ? m.receiver : m.sender;
+          return {
+            ...m,
+            partner,
+            isMutualMatch: true,
+          };
+        });
+      }
       default:
         throw new BadRequestException('Invalid connection type requested');
     }

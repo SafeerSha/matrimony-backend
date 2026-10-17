@@ -1,125 +1,65 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Put,
-  Param,
-  Body,
-  UseGuards,
-  ParseUUIDPipe,
-} from '@nestjs/common';
-import {
-  ApiTags,
-  ApiBearerAuth,
-  ApiOperation,
-  ApiResponse,
-  ApiParam,
-} from '@nestjs/swagger';
+import { Controller, Get, Post, Put, Param, Body, UseGuards } from '@nestjs/common';
 import { ChatService } from './chat.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { SendMessageDto } from './dto/send-message.dto';
 
-@ApiTags('Chat')
-@ApiBearerAuth('JWT-auth')
 @Controller('chat')
 @UseGuards(JwtAuthGuard)
 export class ChatController {
   constructor(private readonly chatService: ChatService) {}
 
   @Get('conversations')
-  @ApiOperation({
-    summary: 'Get active conversations for the authenticated user',
-    description:
-      'Returns matched partner profiles, last exchanged message, and unread count, sorted by most recent activity.',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Active conversations list retrieved successfully',
-  })
   async getConversations(@CurrentUser() user: any) {
     return this.chatService.getConversations(user.sub);
   }
 
+  @Post('initiate/:contactId')
+  async initiateChat(@CurrentUser() user: any, @Param('contactId') contactId: string) {
+    return this.chatService.initiateChat(user.sub, contactId);
+  }
+
+  @Post('initiate')
+  async initiateChatBody(@CurrentUser() user: any, @Body('contactId') contactId: string) {
+    return this.chatService.initiateChat(user.sub, contactId);
+  }
+
   @Get('history/:contactId')
-  @ApiOperation({
-    summary: 'Get full message history with a matched contact',
-    description:
-      'Retrieves all messages between current user and contact in ascending chronological order.',
-  })
-  @ApiParam({
-    name: 'contactId',
-    description: 'UUID of the matched contact',
-    type: String,
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Chat history retrieved successfully',
-  })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden if the users are not mutually matched',
-  })
-  async getHistory(
-    @CurrentUser() user: any,
-    @Param('contactId', ParseUUIDPipe) contactId: string,
-  ) {
+  async getHistory(@CurrentUser() user: any, @Param('contactId') contactId: string) {
     return this.chatService.getChatHistory(user.sub, contactId);
   }
 
-  @Put('read/:contactId')
-  @ApiOperation({
-    summary: 'Mark all incoming unread messages from a contact as read',
-  })
-  @ApiParam({
-    name: 'contactId',
-    description: 'UUID of the sender whose messages are being marked as read',
-    type: String,
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Messages marked as read successfully',
-  })
-  async markAsRead(
+  @Get('conversations/:conversationId/messages')
+  async getConversationMessages(
     @CurrentUser() user: any,
-    @Param('contactId', ParseUUIDPipe) contactId: string,
+    @Param('conversationId') conversationId: string
   ) {
-    return this.chatService.markAsRead(user.sub, contactId);
+    const contactId = conversationId.replace('conv-', '');
+    return this.chatService.getChatHistory(user.sub, contactId);
   }
 
   @Post('messages')
-  @ApiOperation({
-    summary: 'Send a message over HTTP (REST fallback)',
-    description:
-      'Provides fallback message sending when WebSocket connection is offline or reconnecting.',
-  })
-  @ApiResponse({
-    status: 201,
-    description: 'Message created and delivered successfully',
-  })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden if the users are not mutually matched',
-  })
-  async sendMessage(
+  async sendMessageHttp(
     @CurrentUser() user: any,
-    @Body() dto: SendMessageDto,
+    @Body() body: { receiverId: string; content: string }
   ) {
-    return this.chatService.sendMessage(user.sub, dto.receiverId, dto.content);
+    return this.chatService.sendMessage(user.sub, body.receiverId, body.content);
   }
 
-  @Post('message')
-  @ApiOperation({
-    summary: 'Send a message over HTTP (singular endpoint alias)',
-  })
-  @ApiResponse({
-    status: 201,
-    description: 'Message created and delivered successfully',
-  })
-  async sendMessageAlias(
+  @Put('read/:contactId')
+  async markAsRead(@CurrentUser() user: any, @Param('contactId') contactId: string) {
+    await this.chatService.markAsRead(user.sub, contactId);
+    return { success: true };
+  }
+
+  @Post('conversations/:conversationId/read')
+  async markConversationAsRead(
     @CurrentUser() user: any,
-    @Body() dto: SendMessageDto,
+    @Param('conversationId') conversationId: string
   ) {
-    return this.chatService.sendMessage(user.sub, dto.receiverId, dto.content);
+    const contactId = conversationId.replace('conv-', '');
+    await this.chatService.markAsRead(user.sub, contactId);
+    return { success: true };
   }
 }
+
