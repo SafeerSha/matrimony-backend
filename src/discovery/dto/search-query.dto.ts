@@ -48,4 +48,44 @@ export class SearchQueryDto {
   @IsOptional()
   @IsString()
   employmentStatus?: string;
+
+  @IsOptional()
+  @IsString()
+  gender?: string;
+
+  @IsOptional()
+  @IsString()
+  caste?: string;
+
+  @IsOptional()
+  @IsString()
+  diet?: string;
+
+  @IsOptional()
+  @IsString()
+  minHeight?: string;
+
+  @IsOptional()
+  @IsString()
+  maxHeight?: string;
+
+  @IsOptional()
+  @IsString()
+  income?: string;
+
+  @IsOptional()
+  @IsString()
+  annualIncome?: string;
+
+  @IsOptional()
+  @IsString()
+  intent?: string;
+
+  @IsOptional()
+  @IsString()
+  language?: string;
+
+  @IsOptional()
+  @IsString()
+  motherTongue?: string;
 }
