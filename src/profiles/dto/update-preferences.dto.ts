@@ -66,4 +66,19 @@ export class UpdatePreferencesDto {
 
   @IsOptional()
   diet?: any;
+
+  @IsOptional()
+  gender?: any;
+
+  @IsOptional()
+  caste?: any;
+
+  @IsOptional()
+  income?: any;
+
+  @IsOptional()
+  intent?: any;
+
+  @IsOptional()
+  language?: any;
 }

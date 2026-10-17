@@ -111,6 +111,61 @@ export class DiscoveryService {
       profileConditions.push({ dateOfBirth: dobFilter });
     }
 
+    if (query.gender && query.gender !== 'any') {
+      const g = query.gender.toLowerCase();
+      if (g === 'women' || g === 'female') {
+        profileConditions.push({
+          gender: { in: ['female', 'Female', 'women', 'Women'] }
+        });
+      } else if (g === 'men' || g === 'male') {
+        profileConditions.push({
+          gender: { in: ['male', 'Male', 'men', 'Men'] }
+        });
+      } else {
+        profileConditions.push({
+          gender: { equals: query.gender, mode: 'insensitive' }
+        });
+      }
+    }
+
+    if (query.caste && query.caste !== 'Any') {
+      profileConditions.push({
+        caste: { contains: query.caste, mode: 'insensitive' }
+      });
+    }
+
+    const rawIncome = (query.income || query.annualIncome || '').trim();
+    if (rawIncome && rawIncome !== 'Any') {
+      profileConditions.push({
+        annualIncome: { contains: rawIncome, mode: 'insensitive' }
+      });
+    }
+
+    if (query.intent && query.intent !== 'Any') {
+      profileConditions.push({
+        OR: [
+          { category: { contains: query.intent, mode: 'insensitive' } },
+          { lookingFor: { contains: query.intent, mode: 'insensitive' } }
+        ]
+      });
+    }
+
+    const rawLang = (query.language || query.motherTongue || '').trim();
+    if (rawLang && rawLang !== 'Any') {
+      profileConditions.push({
+        motherTongue: { contains: rawLang, mode: 'insensitive' }
+      });
+    }
+
+    if (query.diet && query.diet !== "Doesn't Matter" && query.diet !== 'Any') {
+      profileConditions.push({
+        OR: [
+          { lifestyle: { hasSome: [query.diet, query.diet.toLowerCase(), query.diet.toUpperCase()] } },
+          { bio: { contains: query.diet, mode: 'insensitive' } }
+        ]
+      });
+    }
+
     if (profileConditions.length > 0) {
       whereClause.profile = {
         AND: profileConditions,
@@ -178,23 +233,64 @@ export class DiscoveryService {
   }
 
   async getRecommendations(currentUserId: string) {
-    const userPref = await this.prisma.preference.findUnique({
-      where: { userId: currentUserId }
+    const user = await this.prisma.user.findUnique({
+      where: { id: currentUserId },
+      include: {
+        profile: true,
+        preference: true,
+      },
     });
 
-    if (!userPref) {
+    if (!user) {
       return this.searchProfiles({}, currentUserId);
     }
 
+    const userPref = user.preference;
+    const profilePrefs = (user.profile?.preferences || {}) as any;
+
     const query = new SearchQueryDto();
-    if (userPref.minAge) query.minAge = userPref.minAge.toString();
-    if (userPref.maxAge) query.maxAge = userPref.maxAge.toString();
-    if (userPref.education) query.education = userPref.education;
-    if (userPref.occupations) query.occupation = userPref.occupations;
-    if (userPref.employmentStatuses) query.employmentStatus = userPref.employmentStatuses;
-    
+    const minAge = userPref?.minAge ?? profilePrefs.minAge;
+    const maxAge = userPref?.maxAge ?? profilePrefs.maxAge;
+    if (minAge) query.minAge = minAge.toString();
+    if (maxAge) query.maxAge = maxAge.toString();
+
+    const education = userPref?.education ?? (Array.isArray(profilePrefs.education) ? profilePrefs.education[0] : profilePrefs.education);
+    if (education && education !== 'Any qualification' && education !== 'Any') query.education = education;
+
+    const occupation = userPref?.occupations ?? (Array.isArray(profilePrefs.professions) ? profilePrefs.professions[0] : profilePrefs.professions);
+    if (occupation && occupation !== 'Any profession' && occupation !== 'Any') query.occupation = occupation;
+
+    const employmentStatus = userPref?.employmentStatuses ?? (Array.isArray(profilePrefs.employmentStatuses) ? profilePrefs.employmentStatuses[0] : profilePrefs.employmentStatuses);
+    if (employmentStatus) query.employmentStatus = employmentStatus;
+
+    const religion = userPref?.religions ?? (Array.isArray(profilePrefs.religions) ? profilePrefs.religions[0] : profilePrefs.religions);
+    if (religion && religion !== 'Open to all communities' && religion !== 'Any') query.religion = religion;
+
+    const city = userPref?.location ?? (Array.isArray(profilePrefs.locations) ? profilePrefs.locations[0] : profilePrefs.locations);
+    if (city && city !== 'Any location' && city !== 'All locations') query.city = city;
+
+    const maritalStatus = userPref?.maritalStatuses ?? (Array.isArray(profilePrefs.maritalStatus) ? profilePrefs.maritalStatus[0] : profilePrefs.maritalStatus);
+    if (maritalStatus && maritalStatus !== 'Open to All' && maritalStatus !== 'Any') query.maritalStatus = maritalStatus;
+
+    if (profilePrefs.gender && profilePrefs.gender !== 'any') {
+      query.gender = profilePrefs.gender;
+    } else if (user.profile?.gender) {
+      const g = user.profile.gender.toLowerCase();
+      if (g === 'male' || g === 'man') query.gender = 'women';
+      else if (g === 'female' || g === 'woman') query.gender = 'men';
+    }
+
+    if (profilePrefs.caste && profilePrefs.caste !== 'Any') {
+      query.caste = profilePrefs.caste;
+    }
+
+    const diet = userPref?.diet ?? (Array.isArray(profilePrefs.diet) ? profilePrefs.diet[0] : profilePrefs.diet);
+    if (diet && diet !== "Doesn't Matter" && diet !== 'Any') {
+      query.diet = diet;
+    }
+
     query.limit = '10';
-    
+
     return this.searchProfiles(query, currentUserId);
   }
 }

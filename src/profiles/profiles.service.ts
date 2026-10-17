@@ -53,6 +53,12 @@ export function formatPreferencesObject(profilePrefs: any, tablePref: any) {
   const employmentStatuses = parseStringOrArray(p.employmentStatuses || t.employmentStatuses);
   const diet = parseStringOrArray(p.diet || t.diet);
 
+  const gender = p.gender !== undefined && p.gender !== null ? String(p.gender) : null;
+  const caste = p.caste !== undefined && p.caste !== null ? String(p.caste) : null;
+  const income = p.income !== undefined && p.income !== null ? String(p.income) : null;
+  const intent = p.intent !== undefined && p.intent !== null ? String(p.intent) : null;
+  const language = p.language !== undefined && p.language !== null ? String(p.language) : null;
+
   return {
     minAge,
     maxAge,
@@ -65,6 +71,11 @@ export function formatPreferencesObject(profilePrefs: any, tablePref: any) {
     professions,
     employmentStatuses,
     diet,
+    gender,
+    caste,
+    income,
+    intent,
+    language,
   };
 }
 
@@ -346,8 +357,16 @@ export class ProfilesService {
     if (location !== undefined) preferencePayload.location = transformToStringOrCsv({ value: location });
     if (diet !== undefined) preferencePayload.diet = transformToStringOrCsv({ value: diet });
 
+    // Merge with existing profile preferences to preserve untouched filter fields
+    const currentProfile = await this.prisma.profile.findUnique({
+      where: { userId },
+      select: { preferences: true },
+    });
+    const existingPrefs = (currentProfile?.preferences as any) || {};
+    const mergedData = { ...existingPrefs, ...data };
+
     // Store rich JSON in Profile.preferences as well
-    const formattedPrefs = formatPreferencesObject(data, preferencePayload);
+    const formattedPrefs = formatPreferencesObject(mergedData, preferencePayload);
 
     await this.prisma.profile.upsert({
       where: { userId },
