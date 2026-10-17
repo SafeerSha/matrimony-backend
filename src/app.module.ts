@@ -12,6 +12,7 @@ import { ProfilesModule } from './profiles/profiles.module';
 import { DiscoveryModule } from './discovery/discovery.module';
 import { ConnectionsModule } from './connections/connections.module';
 import { MediaModule } from './media/media.module';
+import { StorageModule } from './storage/storage.module';
 import { AdminModule } from './admin/admin.module';
 import { ChatModule } from './chat/chat.module';
 import { NotificationsModule } from './notifications/notifications.module';
@@ -35,6 +36,7 @@ import { OnboardingModule } from './onboarding/onboarding.module';
     ProfilesModule,
     DiscoveryModule,
     ConnectionsModule,
+    StorageModule,
     MediaModule,
     AdminModule,
     ChatModule,

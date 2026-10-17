@@ -14,7 +14,10 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpdatePreferencesDto } from './dto/update-preferences.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 
+@ApiTags('Profiles')
+@ApiBearerAuth('JWT-auth')
 @Controller('profiles')
 @UseGuards(JwtAuthGuard)
 export class ProfilesController {

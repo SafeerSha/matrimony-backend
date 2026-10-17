@@ -21,6 +21,8 @@
     "prisma:studio": "prisma studio"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1152.0",
+    "@aws-sdk/s3-request-presigner": "^3.1152.0",
     "@nestjs/common": "^12.1.2",
     "@nestjs/config": "^4.0.2",
     "@nestjs/core": "^12.1.2",
@@ -29,11 +31,10 @@
     "@nestjs/platform-express": "^12.1.2",
     "@nestjs/platform-socket.io": "^12.1.2",
     "@nestjs/serve-static": "^12.0.0",
-    "@nestjs/swagger": "^11.2.0",
+    "@nestjs/swagger": "^12.0.2",
     "@nestjs/throttler": "^6.7.1",
     "@nestjs/websockets": "^12.1.2",
     "@prisma/client": "^6.16.2",
-    "prisma": "^6.16.2",
     "argon2": "^0.44.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
@@ -48,9 +49,12 @@
     "passport-jwt": "^4.0.1",
     "pino": "^9.13.2",
     "pino-http": "^10.5.0",
+    "prisma": "^6.16.2",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
-    "socket.io": "^4.8.4"
+    "sharp": "^0.35.5",
+    "socket.io": "^4.8.4",
+    "swagger-ui-express": "^5.0.1"
   },
   "devDependencies": {
     "@nestjs/cli": "^12.0.0",
@@ -72,19 +76,22 @@
     "typescript": "^5.9.2"
   },
   "jest": {
-    "moduleFileExtensions": [
-      "js",
-      "json",
-      "ts"
-    ],
+    "moduleFileExtensions": ["js", "json", "ts"],
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
+    "extensionsToTreatAsEsm": [".ts"],
     "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
+      "^.+\\.(t|j)s$": [
+        "ts-jest",
+        {
+          "useESM": true,
+          "tsconfig": {
+            "module": "esnext"
+          }
+        }
+      ]
     },
-    "collectCoverageFrom": [
-      "**/*.(t|j)s"
-    ],
+    "collectCoverageFrom": ["**/*.(t|j)s"],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
   },

@@ -53,6 +53,17 @@ describe('AuthService', () => {
       create: jest.fn(),
       update: jest.fn(),
     },
+    userDevice: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+      upsert: jest.fn(),
+      delete: jest.fn(),
+      deleteMany: jest.fn(),
+    },
     $transaction: jest.fn(),
   };
 
@@ -106,7 +117,7 @@ describe('AuthService', () => {
   describe('login', () => {
     it('should login successfully and return token', async () => {
       const dto = { email: 'test@test.com', password: 'password' };
-      const user = { id: '1', email: 'test@test.com', passwordHash: 'hash', role: 'USER', isBanned: false };
+      const user = { id: '1', email: 'test@test.com', passwordHash: 'hash', isPasswordEnabled: true, role: 'USER', isBanned: false };
       
       mockUsersService.findByEmail.mockResolvedValue(user);
       (argon2.verify as jest.Mock).mockResolvedValue(true);
@@ -120,7 +131,7 @@ describe('AuthService', () => {
 
     it('should throw UnauthorizedException for wrong password', async () => {
       const dto = { email: 'test@test.com', password: 'password' };
-      const user = { id: '1', email: 'test@test.com', passwordHash: 'hash', role: 'USER', isBanned: false };
+      const user = { id: '1', email: 'test@test.com', passwordHash: 'hash', isPasswordEnabled: true, role: 'USER', isBanned: false };
       
       mockUsersService.findByEmail.mockResolvedValue(user);
       (argon2.verify as jest.Mock).mockResolvedValue(false);
@@ -130,7 +141,7 @@ describe('AuthService', () => {
 
     it('should throw BadRequestException if user registered via OTP and has no password', async () => {
       const dto = { email: 'otpuser@test.com', password: 'password' };
-      const user = { id: '1', email: 'otpuser@test.com', passwordHash: null, role: 'USER', isBanned: false };
+      const user = { id: '1', email: 'otpuser@test.com', passwordHash: null, isPasswordEnabled: false, role: 'USER', isBanned: false };
 
       mockUsersService.findByEmail.mockResolvedValue(user);
 
@@ -139,9 +150,20 @@ describe('AuthService', () => {
       );
     });
 
+    it('should throw BadRequestException if password login is disabled for the account', async () => {
+      const dto = { email: 'disabled@test.com', password: 'password' };
+      const user = { id: '1', email: 'disabled@test.com', passwordHash: 'hash', isPasswordEnabled: false, role: 'USER', isBanned: false };
+
+      mockUsersService.findByEmail.mockResolvedValue(user);
+
+      await expect(service.login(dto)).rejects.toThrow(
+        'Password login is disabled for this account. Please sign in using the Mobile OTP tab or re-enable password login in account settings.',
+      );
+    });
+
     it('should login by phone number when phone is provided as identifier', async () => {
       const dto = { identifier: '+919876543210', password: 'password' };
-      const user = { id: '1', phone: '+919876543210', passwordHash: 'hash', role: 'USER', isBanned: false };
+      const user = { id: '1', phone: '+919876543210', passwordHash: 'hash', isPasswordEnabled: true, role: 'USER', isBanned: false };
 
       mockUsersService.findByPhone.mockResolvedValue(user);
       (argon2.verify as jest.Mock).mockResolvedValue(true);
@@ -414,24 +436,237 @@ describe('AuthService', () => {
   });
 
   describe('setPassword', () => {
-    it('should hash and update user password', async () => {
+    it('should hash and update user password and enable password login', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue({ id: 'usr-1' });
       (argon2.hash as jest.Mock).mockResolvedValue('newHashedPassword');
-      mockPrismaService.user.update.mockResolvedValue({});
+      const updatedUser = {
+        id: 'usr-1',
+        isPasswordEnabled: true,
+        passwordChangedAt: new Date(),
+      };
+      mockPrismaService.user.update.mockResolvedValue(updatedUser);
 
-      const result = await service.setPassword('usr-1', { password: 'NewSecurePassword123!' });
+      const result = await service.setPassword('usr-1', {
+        password: 'NewSecurePassword123!',
+        confirmPassword: 'NewSecurePassword123!',
+      });
 
       expect(result.success).toBe(true);
-      expect(mockPrismaService.user.update).toHaveBeenCalledWith({
-        where: { id: 'usr-1' },
-        data: { passwordHash: 'newHashedPassword' },
-      });
+      expect(result.isPasswordEnabled).toBe(true);
+      expect(mockPrismaService.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'usr-1' },
+          data: expect.objectContaining({
+            passwordHash: 'newHashedPassword',
+            isPasswordEnabled: true,
+          }),
+        }),
+      );
     });
 
     it('should throw BadRequestException if password is less than 8 characters', async () => {
       await expect(
         service.setPassword('usr-1', { password: 'short' }),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw BadRequestException if confirmPassword does not match', async () => {
+      await expect(
+        service.setPassword('usr-1', {
+          password: 'Password123!',
+          confirmPassword: 'MismatchedPassword123!',
+        }),
+      ).rejects.toThrow('Passwords do not match');
+    });
+  });
+
+  describe('enablePassword', () => {
+    it('should enable password when user already has a passwordHash', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue({
+        id: 'usr-1',
+        passwordHash: 'existingHash',
+        isPasswordEnabled: false,
+      });
+      mockPrismaService.user.update.mockResolvedValue({
+        id: 'usr-1',
+        isPasswordEnabled: true,
+        passwordChangedAt: new Date(),
+      });
+
+      const result = await service.enablePassword('usr-1');
+
+      expect(result.success).toBe(true);
+      expect(result.isPasswordEnabled).toBe(true);
+      expect(mockPrismaService.user.update).toHaveBeenCalledWith({
+        where: { id: 'usr-1' },
+        data: { isPasswordEnabled: true },
+      });
+    });
+
+    it('should set and enable new password if provided in enable request', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue({ id: 'usr-1', passwordHash: null });
+      (argon2.hash as jest.Mock).mockResolvedValue('newHashedPassword');
+      mockPrismaService.user.update.mockResolvedValue({
+        id: 'usr-1',
+        isPasswordEnabled: true,
+        passwordChangedAt: new Date(),
+      });
+
+      const result = await service.enablePassword('usr-1', {
+        password: 'BrandNewPassword123!',
+        confirmPassword: 'BrandNewPassword123!',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.isPasswordEnabled).toBe(true);
+      expect(mockPrismaService.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'usr-1' },
+          data: expect.objectContaining({
+            passwordHash: 'newHashedPassword',
+            isPasswordEnabled: true,
+          }),
+        }),
+      );
+    });
+
+    it('should throw BadRequestException if user has no password and none is provided', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue({
+        id: 'usr-1',
+        passwordHash: null,
+      });
+
+      await expect(service.enablePassword('usr-1')).rejects.toThrow(
+        'No password set on this account. Please set a password first to enable password login.',
+      );
+    });
+  });
+
+  describe('disablePassword', () => {
+    it('should disable password login successfully', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue({
+        id: 'usr-1',
+        passwordHash: 'existingHash',
+        isPasswordEnabled: true,
+      });
+      mockPrismaService.user.update.mockResolvedValue({
+        id: 'usr-1',
+        isPasswordEnabled: false,
+        passwordChangedAt: new Date(),
+      });
+
+      const result = await service.disablePassword('usr-1');
+
+      expect(result.success).toBe(true);
+      expect(result.isPasswordEnabled).toBe(false);
+      expect(result.message).toContain('Mobile OTP');
+      expect(mockPrismaService.user.update).toHaveBeenCalledWith({
+        where: { id: 'usr-1' },
+        data: { isPasswordEnabled: false },
+      });
+    });
+  });
+
+  describe('getPasswordStatus', () => {
+    it('should return password status for user', async () => {
+      const now = new Date();
+      mockPrismaService.user.findUnique.mockResolvedValue({
+        id: 'usr-1',
+        isPasswordEnabled: true,
+        passwordHash: 'someHash',
+        passwordChangedAt: now,
+      });
+
+      const result = await service.getPasswordStatus('usr-1');
+
+      expect(result.success).toBe(true);
+      expect(result.hasPassword).toBe(true);
+      expect(result.isPasswordEnabled).toBe(true);
+      expect(result.passwordChangedAt).toEqual(now);
+    });
+  });
+
+  describe('Device Session Management', () => {
+    it('should return list of active devices and identify current device', async () => {
+      const now = new Date();
+      const mockDevices = [
+        {
+          id: 'dev-1',
+          userId: 'usr-1',
+          sessionId: 'sess-current',
+          deviceName: 'Chrome on Windows 11',
+          deviceType: 'DESKTOP',
+          browser: 'Chrome',
+          os: 'Windows 11',
+          location: 'Kochi, Kerala',
+          ipAddress: '127.0.0.1',
+          lastActiveAt: now,
+          createdAt: now,
+        },
+        {
+          id: 'dev-2',
+          userId: 'usr-1',
+          sessionId: 'sess-other',
+          deviceName: 'ShaadiChat iOS Mobile App',
+          deviceType: 'MOBILE',
+          browser: 'ShaadiChat App',
+          os: 'iOS',
+          location: 'Kochi',
+          ipAddress: '127.0.0.1',
+          lastActiveAt: new Date(now.getTime() - 7200000),
+          createdAt: new Date(now.getTime() - 7200000),
+        },
+      ];
+
+      mockPrismaService.userDevice.findMany.mockResolvedValue(mockDevices);
+      mockPrismaService.userDevice.updateMany.mockResolvedValue({});
+
+      const result = await service.getDevices('usr-1', 'sess-current');
+
+      expect(result).toHaveLength(2);
+      expect(result[0].isCurrent).toBe(true);
+      expect(result[0].deviceName).toBe('Chrome on Windows 11');
+      expect(result[1].isCurrent).toBe(false);
+      expect(result[1].deviceType).toBe('MOBILE');
+    });
+
+    it('should log out all other devices except current session', async () => {
+      mockPrismaService.userDevice.deleteMany.mockResolvedValue({ count: 2 });
+
+      const result = await service.logoutOtherDevices('usr-1', 'sess-current');
+
+      expect(result.success).toBe(true);
+      expect(result.revokedCount).toBe(2);
+      expect(mockPrismaService.userDevice.deleteMany).toHaveBeenCalledWith({
+        where: {
+          userId: 'usr-1',
+          sessionId: { not: 'sess-current' },
+        },
+      });
+    });
+
+    it('should remove specific device by id', async () => {
+      mockPrismaService.userDevice.findFirst.mockResolvedValue({
+        id: 'dev-other',
+        userId: 'usr-1',
+        sessionId: 'sess-other',
+      });
+      mockPrismaService.userDevice.delete.mockResolvedValue({});
+
+      const result = await service.removeDevice('usr-1', 'dev-other', 'sess-current');
+
+      expect(result.success).toBe(true);
+      expect(mockPrismaService.userDevice.delete).toHaveBeenCalledWith({
+        where: { id: 'dev-other' },
+      });
+    });
+
+    it('should throw NotFoundException if device to remove does not exist', async () => {
+      mockPrismaService.userDevice.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.removeDevice('usr-1', 'dev-unknown', 'sess-current'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 });

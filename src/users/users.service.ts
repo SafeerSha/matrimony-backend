@@ -4,6 +4,8 @@ import { PrismaService } from '../prisma/prisma.service';
 export interface CreateUserData {
   email?: string;
   passwordHash?: string;
+  isPasswordEnabled?: boolean;
+  passwordChangedAt?: Date | null;
   phone?: string;
   firstName?: string;
   lastName?: string;
@@ -104,6 +106,8 @@ export class UsersService implements OnModuleInit {
         email: data.email,
         phone: data.phone,
         passwordHash: data.passwordHash,
+        isPasswordEnabled: data.isPasswordEnabled ?? (data.passwordHash ? true : false),
+        passwordChangedAt: data.passwordChangedAt ?? (data.passwordHash ? new Date() : null),
         firstName: data.firstName,
         lastName: data.lastName,
         profileId,

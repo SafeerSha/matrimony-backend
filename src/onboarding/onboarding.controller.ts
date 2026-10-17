@@ -3,7 +3,10 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { OnboardingService } from './onboarding.service';
 import { CompleteOnboardingDto } from './dto/complete-onboarding.dto';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 
+@ApiTags('Onboarding')
+@ApiBearerAuth('JWT-auth')
 @Controller('onboarding')
 @UseGuards(JwtAuthGuard)
 export class OnboardingController {

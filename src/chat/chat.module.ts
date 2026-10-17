@@ -11,8 +11,13 @@ import { NotificationsModule } from '../notifications/notifications.module';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET') || 'supersecret',
-        signOptions: { expiresIn: '7d' },
+        secret:
+          configService.get<string>('JWT_ACCESS_SECRET') ||
+          configService.get<string>('JWT_SECRET') ||
+          'supersecret',
+        signOptions: {
+          expiresIn: (configService.get<string>('JWT_ACCESS_EXPIRES_IN') || '15m') as any,
+        },
       }),
       inject: [ConfigService],
     }),
@@ -20,6 +25,6 @@ import { NotificationsModule } from '../notifications/notifications.module';
   ],
   providers: [ChatService, ChatGateway],
   controllers: [ChatController],
-  exports: [ChatService],
+  exports: [ChatService, ChatGateway],
 })
 export class ChatModule {}

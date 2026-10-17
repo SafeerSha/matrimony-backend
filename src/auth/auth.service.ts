@@ -18,9 +18,11 @@ import { SendOtpDto } from './dto/send-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { VerifyRegistrationDto } from './dto/verify-registration.dto';
 import { SetPasswordDto } from './dto/set-password.dto';
+import { EnablePasswordDto } from './dto/enable-password.dto';
 import { ConfigService } from '@nestjs/config';
 import { normalizePhoneNumber } from '../common/utils/phone.util';
 import { splitFullName } from '../common/utils/name.util';
+import { parseUserAgentAndHeaders, ParsedDeviceInfo } from '../common/utils/device-parser.util';
 
 @Injectable()
 export class AuthService {
@@ -31,8 +33,8 @@ export class AuthService {
     private configService: ConfigService,
   ) {}
 
-  async getTokens(userId: string, email: string | null | undefined, role: string) {
-    const payload = { sub: userId, email: email || '', role };
+  async getTokens(userId: string, email: string | null | undefined, role: string, sessionId?: string) {
+    const payload = { sub: userId, email: email || '', role, ...(sessionId ? { sessionId } : {}) };
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, {
         secret: this.configService.get<string>('JWT_ACCESS_SECRET'),
@@ -44,15 +46,43 @@ export class AuthService {
       }),
     ]);
 
-    return { accessToken, refreshToken };
+    return { accessToken, refreshToken, sessionId };
   }
 
-  async updateRefreshToken(userId: string, refreshToken: string) {
+  async updateRefreshToken(
+    userId: string,
+    refreshToken: string,
+    sessionId?: string,
+    deviceInfo?: ParsedDeviceInfo,
+  ) {
     const hashedRefreshToken = await argon2.hash(refreshToken);
     await this.usersService.updateRefreshToken(userId, hashedRefreshToken);
+
+    if (sessionId) {
+      await this.prisma.userDevice.upsert({
+        where: { sessionId },
+        create: {
+          userId,
+          sessionId,
+          hashedRefreshToken,
+          deviceName: deviceInfo?.deviceName || 'Chrome on Windows 11',
+          deviceType: deviceInfo?.deviceType || 'DESKTOP',
+          browser: deviceInfo?.browser || 'Chrome',
+          os: deviceInfo?.os || 'Windows 11',
+          ipAddress: deviceInfo?.ipAddress || '127.0.0.1',
+          location: deviceInfo?.location || 'Kochi, Kerala',
+          userAgent: deviceInfo?.deviceName,
+          lastActiveAt: new Date(),
+        },
+        update: {
+          hashedRefreshToken,
+          lastActiveAt: new Date(),
+        },
+      });
+    }
   }
 
-  async quickRegister(dto: QuickRegisterDto) {
+  async quickRegister(dto: QuickRegisterDto, deviceInfo?: ParsedDeviceInfo) {
     const normalizedEmail = dto.email ? dto.email.trim().toLowerCase() : null;
     const normalizedPhone = normalizePhoneNumber(dto.phone);
 
@@ -112,8 +142,9 @@ export class AuthService {
         }
 
         // Resuming existing draft
-        const tokens = await this.getTokens(existingUser.id, existingUser.email, existingUser.role);
-        await this.updateRefreshToken(existingUser.id, tokens.refreshToken);
+        const sessionId = crypto.randomUUID();
+        const tokens = await this.getTokens(existingUser.id, existingUser.email, existingUser.role, sessionId);
+        await this.updateRefreshToken(existingUser.id, tokens.refreshToken, sessionId, deviceInfo);
 
         let profile = existingUser.profile;
         if (!profile) {
@@ -206,8 +237,9 @@ export class AuthService {
       return { user: newUser, profile: newProfile };
     });
 
-    const tokens = await this.getTokens(user.id, user.email, user.role);
-    await this.updateRefreshToken(user.id, tokens.refreshToken);
+    const sessionId = crypto.randomUUID();
+    const tokens = await this.getTokens(user.id, user.email, user.role, sessionId);
+    await this.updateRefreshToken(user.id, tokens.refreshToken, sessionId, deviceInfo);
 
     return {
       success: true,
@@ -233,7 +265,7 @@ export class AuthService {
     };
   }
 
-  async register(dto: RegisterDto) {
+  async register(dto: RegisterDto, deviceInfo?: ParsedDeviceInfo) {
     const existingUser = await this.usersService.findByEmail(dto.email);
     if (existingUser) {
       throw new ConflictException('Email already in use');
@@ -244,6 +276,8 @@ export class AuthService {
     const user = await this.usersService.create({
       email: dto.email,
       passwordHash,
+      isPasswordEnabled: true,
+      passwordChangedAt: new Date(),
       firstName: dto.firstName,
       lastName: dto.lastName,
       status: 'ACTIVE',
@@ -261,8 +295,9 @@ export class AuthService {
       update: {},
     });
 
-    const tokens = await this.getTokens(user.id, user.email, user.role);
-    await this.updateRefreshToken(user.id, tokens.refreshToken);
+    const sessionId = crypto.randomUUID();
+    const tokens = await this.getTokens(user.id, user.email, user.role, sessionId);
+    await this.updateRefreshToken(user.id, tokens.refreshToken, sessionId, deviceInfo);
 
     const { passwordHash: _, hashedRefreshToken: __, ...result } = user;
 
@@ -333,7 +368,7 @@ export class AuthService {
     };
   }
 
-  async verifyOtp(dto: VerifyOtpDto, allowCreate = false) {
+  async verifyOtp(dto: VerifyOtpDto, allowCreate = false, deviceInfo?: ParsedDeviceInfo) {
     const code = (dto.otp || dto.phoneOtp || '').trim();
     if (!code) {
       throw new BadRequestException('A valid 6-digit OTP code is required');
@@ -461,8 +496,9 @@ export class AuthService {
       });
     }
 
-    const tokens = await this.getTokens(user.id, user.email || '', user.role);
-    await this.updateRefreshToken(user.id, tokens.refreshToken);
+    const sessionId = crypto.randomUUID();
+    const tokens = await this.getTokens(user.id, user.email || '', user.role, sessionId);
+    await this.updateRefreshToken(user.id, tokens.refreshToken, sessionId, deviceInfo);
 
     return {
       success: true,
@@ -491,9 +527,9 @@ export class AuthService {
     };
   }
 
-  async verifyRegistration(dto: VerifyRegistrationDto) {
+  async verifyRegistration(dto: VerifyRegistrationDto, deviceInfo?: ParsedDeviceInfo) {
     const code = (dto.phoneOtp || dto.otp || '').trim();
-    const result = await this.verifyOtp({ phone: dto.phone, otp: code }, true);
+    const result = await this.verifyOtp({ phone: dto.phone, otp: code }, true, deviceInfo);
 
     if (dto.email && result.user) {
       const normalizedEmail = dto.email.trim().toLowerCase();
@@ -518,7 +554,7 @@ export class AuthService {
     return result;
   }
 
-  async login(dto: LoginDto) {
+  async login(dto: LoginDto, deviceInfo?: ParsedDeviceInfo) {
     const rawIdentifier = (dto.identifier || dto.email || dto.phone || '').trim();
     if (!rawIdentifier) {
       throw new BadRequestException('Email or phone number is required');
@@ -545,6 +581,12 @@ export class AuthService {
       );
     }
 
+    if (!user.isPasswordEnabled) {
+      throw new BadRequestException(
+        'Password login is disabled for this account. Please sign in using the Mobile OTP tab or re-enable password login in account settings.',
+      );
+    }
+
     if (user.isBanned) {
       throw new ForbiddenException('Your account has been banned');
     }
@@ -558,8 +600,9 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const tokens = await this.getTokens(user.id, user.email || '', user.role);
-    await this.updateRefreshToken(user.id, tokens.refreshToken);
+    const sessionId = crypto.randomUUID();
+    const tokens = await this.getTokens(user.id, user.email || '', user.role, sessionId);
+    await this.updateRefreshToken(user.id, tokens.refreshToken, sessionId, deviceInfo);
 
     const { passwordHash: _, hashedRefreshToken: __, ...result } = user;
 
@@ -575,6 +618,10 @@ export class AuthService {
       throw new BadRequestException('Password must be at least 8 characters long');
     }
 
+    if (dto.confirmPassword !== undefined && dto.confirmPassword !== dto.password) {
+      throw new BadRequestException('Passwords do not match');
+    }
+
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
     });
@@ -584,36 +631,245 @@ export class AuthService {
     }
 
     const passwordHash = await argon2.hash(dto.password);
+    const now = new Date();
 
-    await this.prisma.user.update({
+    const updatedUser = await this.prisma.user.update({
       where: { id: userId },
-      data: { passwordHash },
+      data: {
+        passwordHash,
+        isPasswordEnabled: true,
+        passwordChangedAt: now,
+      },
     });
 
     return {
       success: true,
-      message: 'Password updated successfully',
+      message: 'Password set and enabled successfully',
+      isPasswordEnabled: updatedUser.isPasswordEnabled,
+      passwordChangedAt: updatedUser.passwordChangedAt,
     };
   }
 
-  async logout(userId: string) {
+  async enablePassword(userId: string, dto?: EnablePasswordDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (dto?.password) {
+      if (dto.password.length < 8) {
+        throw new BadRequestException('Password must be at least 8 characters long');
+      }
+      if (dto.confirmPassword !== undefined && dto.confirmPassword !== dto.password) {
+        throw new BadRequestException('Passwords do not match');
+      }
+      const passwordHash = await argon2.hash(dto.password);
+      const now = new Date();
+      const updatedUser = await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          passwordHash,
+          isPasswordEnabled: true,
+          passwordChangedAt: now,
+        },
+      });
+      return {
+        success: true,
+        message: 'Password set and enabled successfully',
+        isPasswordEnabled: updatedUser.isPasswordEnabled,
+        passwordChangedAt: updatedUser.passwordChangedAt,
+      };
+    }
+
+    if (!user.passwordHash) {
+      throw new BadRequestException(
+        'No password set on this account. Please set a password first to enable password login.',
+      );
+    }
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id: userId },
+      data: { isPasswordEnabled: true },
+    });
+
+    return {
+      success: true,
+      message: 'Password login enabled successfully',
+      isPasswordEnabled: updatedUser.isPasswordEnabled,
+      passwordChangedAt: updatedUser.passwordChangedAt,
+    };
+  }
+
+  async disablePassword(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id: userId },
+      data: { isPasswordEnabled: false },
+    });
+
+    return {
+      success: true,
+      message: 'Password login disabled successfully. You can still sign in using Mobile OTP.',
+      isPasswordEnabled: updatedUser.isPasswordEnabled,
+      passwordChangedAt: updatedUser.passwordChangedAt,
+    };
+  }
+
+  async getPasswordStatus(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        isPasswordEnabled: true,
+        passwordHash: true,
+        passwordChangedAt: true,
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    return {
+      success: true,
+      hasPassword: Boolean(user.passwordHash),
+      isPasswordEnabled: user.isPasswordEnabled,
+      passwordChangedAt: user.passwordChangedAt,
+    };
+  }
+
+  async logout(userId: string, currentSessionId?: string) {
+    if (currentSessionId) {
+      await this.prisma.userDevice.deleteMany({
+        where: { sessionId: currentSessionId },
+      });
+    }
     await this.usersService.clearRefreshToken(userId);
   }
 
-  async refreshTokens(userId: string, refreshToken: string) {
+  async refreshTokens(userId: string, refreshToken: string, sessionId?: string) {
+    let valid = false;
+    if (sessionId) {
+      const device = await this.prisma.userDevice.findUnique({
+        where: { sessionId },
+      });
+      if (device && device.hashedRefreshToken) {
+        valid = await argon2.verify(device.hashedRefreshToken, refreshToken);
+      }
+    }
+
+    if (!valid) {
+      const user = await this.usersService.findById(userId);
+      if (!user || !user.hashedRefreshToken) {
+        throw new UnauthorizedException('Access Denied');
+      }
+      valid = await argon2.verify(user.hashedRefreshToken, refreshToken);
+    }
+
+    if (!valid) {
+      throw new UnauthorizedException('Access Denied');
+    }
+
     const user = await this.usersService.findById(userId);
-    if (!user || !user.hashedRefreshToken) {
+    if (!user) {
       throw new UnauthorizedException('Access Denied');
     }
 
-    const refreshTokenMatches = await argon2.verify(user.hashedRefreshToken, refreshToken);
-    if (!refreshTokenMatches) {
-      throw new UnauthorizedException('Access Denied');
-    }
-
-    const tokens = await this.getTokens(user.id, user.email, user.role);
-    await this.updateRefreshToken(user.id, tokens.refreshToken);
+    const tokens = await this.getTokens(user.id, user.email, user.role, sessionId);
+    await this.updateRefreshToken(user.id, tokens.refreshToken, sessionId);
 
     return tokens;
+  }
+
+  async getDevices(userId: string, currentSessionId?: string, fallbackDeviceInfo?: ParsedDeviceInfo) {
+    let devices = await this.prisma.userDevice.findMany({
+      where: { userId },
+      orderBy: { lastActiveAt: 'desc' },
+    });
+
+    if (devices.length === 0 && currentSessionId) {
+      const created = await this.prisma.userDevice.create({
+        data: {
+          userId,
+          sessionId: currentSessionId,
+          deviceName: fallbackDeviceInfo?.deviceName || 'Chrome on Windows 11',
+          deviceType: fallbackDeviceInfo?.deviceType || 'DESKTOP',
+          browser: fallbackDeviceInfo?.browser || 'Chrome',
+          os: fallbackDeviceInfo?.os || 'Windows 11',
+          ipAddress: fallbackDeviceInfo?.ipAddress || '127.0.0.1',
+          location: fallbackDeviceInfo?.location || 'Kochi, Kerala',
+          lastActiveAt: new Date(),
+        },
+      });
+      devices = [created];
+    } else if (currentSessionId) {
+      await this.prisma.userDevice.updateMany({
+        where: { sessionId: currentSessionId },
+        data: { lastActiveAt: new Date() },
+      });
+    }
+
+    return devices.map((d) => ({
+      id: d.id,
+      deviceName: d.deviceName,
+      deviceType: d.deviceType as 'DESKTOP' | 'MOBILE',
+      browser: d.browser,
+      os: d.os,
+      location: d.location || 'Kochi, Kerala',
+      ipAddress: d.ipAddress,
+      lastActiveAt: d.lastActiveAt,
+      isCurrent: Boolean(currentSessionId && d.sessionId === currentSessionId),
+      createdAt: d.createdAt,
+    }));
+  }
+
+  async logoutOtherDevices(userId: string, currentSessionId?: string) {
+    const where: any = { userId };
+    if (currentSessionId) {
+      where.sessionId = { not: currentSessionId };
+    }
+
+    const result = await this.prisma.userDevice.deleteMany({
+      where,
+    });
+
+    return {
+      success: true,
+      message: 'Logged out from all other devices successfully',
+      revokedCount: result.count,
+    };
+  }
+
+  async removeDevice(userId: string, deviceId: string, currentSessionId?: string) {
+    const device = await this.prisma.userDevice.findFirst({
+      where: { id: deviceId, userId },
+    });
+
+    if (!device) {
+      throw new NotFoundException('Device not found');
+    }
+
+    await this.prisma.userDevice.delete({
+      where: { id: deviceId },
+    });
+
+    if (currentSessionId && device.sessionId === currentSessionId) {
+      await this.usersService.clearRefreshToken(userId);
+    }
+
+    return {
+      success: true,
+      message: 'Device session logged out successfully',
+    };
   }
 }
