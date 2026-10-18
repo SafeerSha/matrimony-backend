@@ -1,3 +1,4 @@
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConnectionsService } from './connections.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -9,9 +10,10 @@ describe('ConnectionsService', () => {
   let prisma: PrismaService;
   let notificationsService: NotificationsService;
 
-  const mockPrisma = {
+  const mockPrisma: any = {
     user: {
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
     },
     connection: {
       findFirst: jest.fn(),
@@ -19,6 +21,7 @@ describe('ConnectionsService', () => {
       findUnique: jest.fn(),
       update: jest.fn(),
       upsert: jest.fn(),
+      delete: jest.fn(),
       findMany: jest.fn(),
     },
   };
@@ -42,7 +45,7 @@ describe('ConnectionsService', () => {
   });
 
   afterEach(() => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
   });
 
   describe('sendInterest', () => {
@@ -114,6 +117,55 @@ describe('ConnectionsService', () => {
     });
   });
 
+  describe('shortlistProfile', () => {
+    it('should throw BadRequestException if user shortlists themselves', async () => {
+      await expect(service.shortlistProfile('u1', 'u1')).rejects.toThrow(BadRequestException);
+    });
+
+    it('should upsert connection with SHORTLISTED status', async () => {
+      const mockResult = { id: 'c-short', senderId: 'u1', receiverId: 'u2', status: 'SHORTLISTED' };
+      mockPrisma.connection.upsert.mockResolvedValue(mockResult);
+
+      const result = await service.shortlistProfile('u1', 'u2');
+      expect(result).toEqual(mockResult);
+      expect(mockPrisma.connection.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { senderId_receiverId: { senderId: 'u1', receiverId: 'u2' } },
+          update: { status: 'SHORTLISTED' },
+          create: { senderId: 'u1', receiverId: 'u2', status: 'SHORTLISTED' },
+        })
+      );
+    });
+  });
+
+  describe('removeShortlist', () => {
+    it('should throw BadRequestException if user removes themselves', async () => {
+      await expect(service.removeShortlist('u1', 'u1')).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw NotFoundException if shortlisted profile not found', async () => {
+      mockPrisma.connection.findFirst.mockResolvedValue(null);
+      await expect(service.removeShortlist('u1', 'u2')).rejects.toThrow(NotFoundException);
+    });
+
+    it('should delete connection record and return success confirmation', async () => {
+      const existing = { id: 'c-short-123', senderId: 'u1', receiverId: 'u2', status: 'SHORTLISTED' };
+      mockPrisma.connection.findFirst.mockResolvedValue(existing);
+      mockPrisma.connection.delete.mockResolvedValue(existing);
+
+      const result = await service.removeShortlist('u1', 'u2');
+      expect(result).toEqual({
+        success: true,
+        message: 'Profile removed from shortlist',
+        id: 'c-short-123',
+        targetId: 'u2',
+      });
+      expect(mockPrisma.connection.delete).toHaveBeenCalledWith({
+        where: { id: 'c-short-123' },
+      });
+    });
+  });
+
   describe('getConnections', () => {
     it('should retrieve live mutual matches with partner mapping', async () => {
       const mockMatches = [
@@ -160,6 +212,33 @@ describe('ConnectionsService', () => {
       expect(result[1].isMutualMatch).toBe(true);
     });
 
+    it('should retrieve shortlisted profiles with partner mapping', async () => {
+      const mockShortlisted = [
+        {
+          id: 'c-short-1',
+          senderId: 'user-me',
+          receiverId: 'user-short-1',
+          status: 'SHORTLISTED',
+          receiver: {
+            id: 'user-short-1',
+            firstName: 'Kavya',
+            lastName: 'Nambiar',
+            profileId: 'SC-KAVY99',
+            photos: [{ url: 'https://img.test/kavya.jpg', isPrimary: true }],
+            profile: { city: 'Kochi', occupation: 'Teacher' },
+          },
+        },
+      ];
+
+      mockPrisma.connection.findMany.mockResolvedValue(mockShortlisted);
+
+      const result = await service.getConnections('user-me', 'shortlisted');
+      expect(result).toHaveLength(1);
+      expect(result[0].partner.id).toBe('user-short-1');
+      expect(result[0].partner.firstName).toBe('Kavya');
+      expect(result[0].status).toBe('SHORTLISTED');
+    });
+
     it('should return empty array when no mutual matches exist', async () => {
       mockPrisma.connection.findMany.mockResolvedValue([]);
       const result = await service.getConnections('user-me', 'matches');
@@ -171,4 +250,3 @@ describe('ConnectionsService', () => {
     });
   });
 });
-

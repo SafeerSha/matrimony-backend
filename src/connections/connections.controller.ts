@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Param, UseGuards, Query } from '@nestjs/common';
+import { Controller, Post, Delete, Get, Param, UseGuards, Query } from '@nestjs/common';
 import { ConnectionsService } from './connections.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -31,8 +31,18 @@ export class ConnectionsController {
     return this.connectionsService.shortlistProfile(user.sub, targetId);
   }
 
+  @Delete('shortlist/:userId')
+  async removeShortlist(@CurrentUser() user: any, @Param('userId') targetId: string) {
+    return this.connectionsService.removeShortlist(user.sub, targetId);
+  }
+
+  @Post('remove-shortlist/:userId')
+  async removeShortlistPost(@CurrentUser() user: any, @Param('userId') targetId: string) {
+    return this.connectionsService.removeShortlist(user.sub, targetId);
+  }
+
   @Get()
-  async getConnections(@CurrentUser() user: any, @Query('type') type: 'sent' | 'received' | 'matches') {
+  async getConnections(@CurrentUser() user: any, @Query('type') type: 'sent' | 'received' | 'matches' | 'shortlisted') {
     return this.connectionsService.getConnections(user.sub, type);
   }
 }
