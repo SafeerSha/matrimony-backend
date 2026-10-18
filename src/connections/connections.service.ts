@@ -120,17 +120,31 @@ export class ConnectionsService {
     });
   }
 
-  async getConnections(userId: string, type: 'sent' | 'received' | 'matches') {
+  async getConnections(userId: string, type: 'sent' | 'received' | 'matches' | 'shortlisted') {
+    const userSelect = {
+      id: true,
+      firstName: true,
+      lastName: true,
+      profileId: true,
+      photos: true,
+      profile: true,
+    };
+
     switch (type) {
       case 'sent':
         return this.prisma.connection.findMany({
-          where: { senderId: userId },
-          include: { receiver: { select: { id: true, firstName: true, lastName: true, profile: true } } },
+          where: { senderId: userId, status: 'PENDING' },
+          include: { receiver: { select: userSelect } },
         });
       case 'received':
         return this.prisma.connection.findMany({
           where: { receiverId: userId, status: 'PENDING' },
-          include: { sender: { select: { id: true, firstName: true, lastName: true, profile: true } } },
+          include: { sender: { select: userSelect } },
+        });
+      case 'shortlisted':
+        return this.prisma.connection.findMany({
+          where: { senderId: userId, status: 'SHORTLISTED' },
+          include: { receiver: { select: userSelect } },
         });
       case 'matches':
         return this.prisma.connection.findMany({
@@ -142,8 +156,8 @@ export class ConnectionsService {
             ],
           },
           include: {
-            sender: { select: { id: true, firstName: true, lastName: true, profile: true } },
-            receiver: { select: { id: true, firstName: true, lastName: true, profile: true } },
+            sender: { select: userSelect },
+            receiver: { select: userSelect },
           },
         });
       default:
