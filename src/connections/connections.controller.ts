@@ -32,7 +32,7 @@ export class ConnectionsController {
   }
 
   @Get()
-  async getConnections(@CurrentUser() user: any, @Query('type') type: 'sent' | 'received' | 'matches') {
+  async getConnections(@CurrentUser() user: any, @Query('type') type: 'sent' | 'received' | 'matches' | 'shortlisted') {
     return this.connectionsService.getConnections(user.sub, type);
   }
 }
