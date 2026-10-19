@@ -1,13 +1,38 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { ChatGateway } from '../chat/chat.gateway';
 
 @Injectable()
 export class ConnectionsService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly notificationsService: NotificationsService
+    private readonly notificationsService: NotificationsService,
+    @Inject(forwardRef(() => ChatGateway))
+    private readonly chatGateway: ChatGateway
   ) {}
+
+  private formatPartnerPayload(user: any) {
+    if (!user) return null;
+    const photos = user.photos || user.profile?.photos || [];
+    const primary = photos.find((p: any) => p.isPrimary)?.url || photos[0]?.url || null;
+    return {
+      id: user.id,
+      profileId: user.profileId,
+      name: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Match',
+      age: user.profile?.dateOfBirth
+        ? Math.floor((new Date().getTime() - new Date(user.profile.dateOfBirth).getTime()) / 31557600000)
+        : 26,
+      city: user.profile?.city || '',
+      state: user.profile?.country || user.profile?.state || '',
+      profession: user.profile?.occupation || user.profile?.profession || 'Professional',
+      education: user.profile?.education || 'Graduate',
+      image: primary || '',
+      compatibility: 94,
+      verified: true,
+      about: user.profile?.bio || '',
+    };
+  }
 
   async sendInterest(senderId: string, receiverId: string) {
     if (senderId === receiverId) {
@@ -57,12 +82,22 @@ export class ConnectionsService {
           },
         });
 
-        await this.notificationsService.createNotification(
+        // 1. Create notification for receiver (the original sender who just got accepted)
+        const notif = await this.notificationsService.createNotification(
           receiverId,
           'MATCH_ACCEPTED',
           'Your interest was accepted! You have a mutual match.',
           senderId
         );
+
+        const partnerForReceiver = this.formatPartnerPayload(accepted.sender);
+        const partnerForSender = this.formatPartnerPayload(accepted.receiver);
+
+        // 2. Realtime WebSocket Push if receiver is currently online
+        this.chatGateway.emitToUser(receiverId, 'match_celebration', {
+          notificationId: notif.id,
+          partner: partnerForReceiver,
+        });
 
         return {
           ...accepted,
@@ -148,12 +183,21 @@ export class ConnectionsService {
       },
     });
 
-    await this.notificationsService.createNotification(
+    // 1. Create notification for the interest sender (the user who sent the interest)
+    const notif = await this.notificationsService.createNotification(
       senderId,
       'MATCH_ACCEPTED',
       'Your interest was accepted! You have a mutual match.',
       receiverId
     );
+
+    const partnerForSender = this.formatPartnerPayload(updated.receiver);
+
+    // 2. Realtime WebSocket Push to sender if they are currently online
+    this.chatGateway.emitToUser(senderId, 'match_celebration', {
+      notificationId: notif.id,
+      partner: partnerForSender,
+    });
 
     return {
       ...updated,
