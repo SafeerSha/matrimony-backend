@@ -1,0 +1,13 @@
+name: Ping Render
+on:
+  schedule:
+    - cron: '*/5 * * * *' # Runs every 5 minutes (GitHub's minimum allowed frequency)
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Visit URL
+        run: |
+          curl -I -s -S https://matrimony-service-7p45.onrender.com

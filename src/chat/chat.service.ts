@@ -278,6 +278,21 @@ export class ChatService {
         receiverId,
         content: trimmed,
       },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            photos: {
+              select: {
+                url: true,
+                isPrimary: true,
+              },
+            },
+          },
+        },
+      },
     });
 
     const sender = await this.prisma.user.findUnique({
@@ -319,5 +334,83 @@ export class ChatService {
     await this.notificationsService.markMessageNotificationAsRead(userId, contactId);
 
     return { success: true };
+  }
+
+  async initiateChat(userId: string, contactId: string) {
+    if (userId === contactId) {
+      throw new ForbiddenException('Cannot initiate chat with yourself.');
+    }
+
+    const connection = await this.prisma.connection.findFirst({
+      where: {
+        status: 'ACCEPTED',
+        OR: [
+          { senderId: userId, receiverId: contactId },
+          { senderId: contactId, receiverId: userId },
+        ],
+      },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            profile: true,
+            photos: { select: { url: true, isPrimary: true, isVerified: true } },
+          },
+        },
+        receiver: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            profile: true,
+            photos: { select: { url: true, isPrimary: true, isVerified: true } },
+          },
+        },
+      },
+    });
+
+    if (!connection) {
+      throw new ForbiddenException('You can only message users you have matched with.');
+    }
+
+    const partner = connection.senderId === userId ? connection.receiver : connection.sender;
+
+    const lastMessage = await this.prisma.message.findFirst({
+      where: {
+        OR: [
+          { senderId: userId, receiverId: contactId },
+          { senderId: contactId, receiverId: userId },
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return {
+      success: true,
+      conversationId: `conv-${partner.id}`,
+      contactId: partner.id,
+      partner: {
+        id: partner.id,
+        name: `${partner.firstName || ''} ${partner.lastName || ''}`.trim() || 'Match',
+        photo: partner.photos?.[0]?.url || null,
+        bio: partner.profile?.bio || null,
+        city: partner.profile?.city || null,
+        occupation: partner.profile?.occupation || null,
+      },
+      lastMessage: lastMessage
+        ? {
+            id: lastMessage.id,
+            conversationId: `conv-${partner.id}`,
+            senderId: lastMessage.senderId,
+            receiverId: lastMessage.receiverId,
+            content: lastMessage.content,
+            createdAt: lastMessage.createdAt.toISOString(),
+            isRead: lastMessage.isRead,
+          }
+        : null,
+      message: 'Conversation initialized successfully',
+    };
   }
 }
