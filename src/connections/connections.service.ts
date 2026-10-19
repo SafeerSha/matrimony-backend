@@ -106,7 +106,50 @@ export class ConnectionsService {
         };
       }
 
-      throw new BadRequestException('Connection already exists');
+      if (existing.status === 'ACCEPTED') {
+        return {
+          ...existing,
+          isMutualMatch: true,
+        };
+      }
+
+      if (existing.status === 'PENDING') {
+        throw new BadRequestException('Interest already sent and pending');
+      }
+
+      // If existing connection was SHORTLISTED or REJECTED, promote it to PENDING interest!
+      const updated = await this.prisma.connection.update({
+        where: { id: existing.id },
+        data: {
+          senderId,
+          receiverId,
+          status: 'PENDING',
+        },
+        include: {
+          receiver: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              profileId: true,
+              profile: true,
+              photos: { select: { url: true, isPrimary: true, isVerified: true } },
+            },
+          },
+        },
+      });
+
+      await this.notificationsService.createNotification(
+        receiverId,
+        'NEW_INTEREST',
+        'Someone sent you an interest!',
+        senderId
+      );
+
+      return {
+        ...updated,
+        isMutualMatch: false,
+      };
     }
 
     const connection = await this.prisma.connection.create({
@@ -300,7 +343,7 @@ export class ConnectionsService {
     switch (type) {
       case 'sent':
         return this.prisma.connection.findMany({
-          where: { senderId: userId },
+          where: { senderId: userId, status: 'PENDING' },
           include: {
             receiver: {
               select: {

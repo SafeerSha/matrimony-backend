@@ -235,6 +235,21 @@ export class ChatService {
         receiverId,
         content: trimmed,
       },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            photos: {
+              select: {
+                url: true,
+                isPrimary: true,
+              },
+            },
+          },
+        },
+      },
     });
 
     await this.notificationsService.createNotification(
