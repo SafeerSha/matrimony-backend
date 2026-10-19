@@ -420,7 +420,10 @@ export class ConnectionsService {
     };
   }
 
-  async getConnections(userId: string, type: 'sent' | 'received' | 'matches' | 'shortlisted') {
+  async getConnections(
+    userId: string,
+    type: 'sent' | 'received' | 'matches' | 'shortlisted' | 'shortlisted_by_me' | 'shortlisted_you',
+  ) {
     switch (type) {
       case 'sent':
         return this.prisma.connection.findMany({
@@ -456,7 +459,8 @@ export class ConnectionsService {
           },
           orderBy: { createdAt: 'desc' },
         });
-      case 'shortlisted': {
+      case 'shortlisted':
+      case 'shortlisted_by_me': {
         const shortlists = await this.prisma.connection.findMany({
           where: { senderId: userId, status: 'SHORTLISTED' },
           include: {
@@ -477,6 +481,29 @@ export class ConnectionsService {
         return shortlists.map((s: any) => ({
           ...s,
           partner: s.receiver,
+        }));
+      }
+      case 'shortlisted_you': {
+        const shortlists = await this.prisma.connection.findMany({
+          where: { receiverId: userId, status: 'SHORTLISTED' },
+          include: {
+            sender: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                profileId: true,
+                profile: true,
+                photos: { select: { url: true, isPrimary: true, isVerified: true } },
+              },
+            },
+          },
+          orderBy: { updatedAt: 'desc' },
+        });
+
+        return shortlists.map((s: any) => ({
+          ...s,
+          partner: s.sender,
         }));
       }
       case 'matches': {

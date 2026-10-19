@@ -83,8 +83,8 @@ async function bootstrap() {
   });
 
   const port = Number(process.env.PORT || 4000);
-  await app.listen(port, '0.0.0.0');
-  console.log(`Application running on http://0.0.0.0:${port}/${process.env.API_PREFIX || 'api/v1'}`);
+  await app.listen(port);
+  console.log(`Application running on http://127.0.0.1:${port}/${process.env.API_PREFIX || 'api/v1'}`);
   console.log(`Swagger documentation available at http://0.0.0.0:${port}/api/docs`);
 }
 bootstrap();

@@ -42,7 +42,10 @@ export class ConnectionsController {
   }
 
   @Get()
-  async getConnections(@CurrentUser() user: any, @Query('type') type: 'sent' | 'received' | 'matches' | 'shortlisted') {
+  async getConnections(
+    @CurrentUser() user: any,
+    @Query('type') type: 'sent' | 'received' | 'matches' | 'shortlisted' | 'shortlisted_by_me' | 'shortlisted_you',
+  ) {
     return this.connectionsService.getConnections(user.sub, type);
   }
 }

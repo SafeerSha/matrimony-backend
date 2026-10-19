@@ -239,6 +239,33 @@ describe('ConnectionsService', () => {
       expect(result[0].status).toBe('SHORTLISTED');
     });
 
+    it('should retrieve profiles that shortlisted user (shortlisted_you) with sender as partner', async () => {
+      const mockShortlistedYou = [
+        {
+          id: 'c-short-you-1',
+          senderId: 'user-admirer-1',
+          receiverId: 'user-me',
+          status: 'SHORTLISTED',
+          sender: {
+            id: 'user-admirer-1',
+            firstName: 'Pooja',
+            lastName: 'Menon',
+            profileId: 'SC-POOJ11',
+            photos: [{ url: 'https://img.test/pooja.jpg', isPrimary: true }],
+            profile: { city: 'Thrissur', occupation: 'Architect' },
+          },
+        },
+      ];
+
+      mockPrisma.connection.findMany.mockResolvedValue(mockShortlistedYou);
+
+      const result = await service.getConnections('user-me', 'shortlisted_you');
+      expect(result).toHaveLength(1);
+      expect(result[0].partner.id).toBe('user-admirer-1');
+      expect(result[0].partner.firstName).toBe('Pooja');
+      expect(result[0].status).toBe('SHORTLISTED');
+    });
+
     it('should return empty array when no mutual matches exist', async () => {
       mockPrisma.connection.findMany.mockResolvedValue([]);
       const result = await service.getConnections('user-me', 'matches');
