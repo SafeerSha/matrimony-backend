@@ -88,4 +88,8 @@ export class SearchQueryDto {
   @IsOptional()
   @IsString()
   motherTongue?: string;
+
+  @IsOptional()
+  @IsString()
+  sortBy?: string;
 }

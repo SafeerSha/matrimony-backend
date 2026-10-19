@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SearchQueryDto } from './dto/search-query.dto';
+import { calculateCompatibility } from '../common/utils/compatibility.util';
 
 @Injectable()
 export class DiscoveryService {
@@ -17,23 +18,17 @@ export class DiscoveryService {
       NOT: [
         { email: { contains: 'demo.ishtamchat.com' } },
         { id: { in: ['meera', 'ananya'] } },
-      ],
-      AND: [
         {
-          NOT: {
-            receivedConnections: {
-              some: { senderId: currentUserId },
-            },
+          receivedConnections: {
+            some: { senderId: currentUserId, status: 'BLOCKED' },
           },
         },
         {
-          NOT: {
-            sentConnections: {
-              some: { receiverId: currentUserId },
-            },
+          sentConnections: {
+            some: { receiverId: currentUserId, status: 'BLOCKED' },
           },
-        }
-      ]
+        },
+      ],
     };
 
     const profileConditions: any[] = [];
@@ -115,8 +110,23 @@ export class DiscoveryService {
       profileConditions.push({ dateOfBirth: dobFilter });
     }
 
-    if (query.gender && query.gender !== 'any') {
-      const g = query.gender.toLowerCase();
+    // Foundation Matchmaking Filter: Opposite gender based on logged-in user
+    let targetGender = query.gender;
+    if (currentUserId) {
+      const currentUser = await this.prisma.user.findUnique({
+        where: { id: currentUserId },
+        select: { profile: { select: { gender: true } } },
+      });
+      const userGender = (currentUser?.profile?.gender || '').toLowerCase().trim();
+      if (userGender === 'male' || userGender === 'man') {
+        targetGender = 'women';
+      } else if (userGender === 'female' || userGender === 'woman') {
+        targetGender = 'men';
+      }
+    }
+
+    if (targetGender && targetGender !== 'any') {
+      const g = targetGender.toLowerCase();
       if (g === 'women' || g === 'female') {
         profileConditions.push({
           gender: { in: ['female', 'Female', 'women', 'Women'] }
@@ -127,7 +137,7 @@ export class DiscoveryService {
         });
       } else {
         profileConditions.push({
-          gender: { equals: query.gender, mode: 'insensitive' }
+          gender: { equals: targetGender, mode: 'insensitive' }
         });
       }
     }
@@ -176,7 +186,7 @@ export class DiscoveryService {
       };
     }
 
-    const [users, total] = await Promise.all([
+    const [users, total, currentUser] = await Promise.all([
       this.prisma.user.findMany({
         where: whereClause,
         skip,
@@ -184,17 +194,30 @@ export class DiscoveryService {
         include: {
           profile: true,
           photos: {
-            where: { isVerified: true },
             orderBy: { createdAt: 'desc' }
+          },
+          receivedConnections: {
+            where: { senderId: currentUserId },
+            select: { status: true, id: true }
+          },
+          sentConnections: {
+            where: { receiverId: currentUserId },
+            select: { status: true, id: true }
           }
         },
         orderBy: { createdAt: 'desc' }
       }),
-      this.prisma.user.count({ where: whereClause })
+      this.prisma.user.count({ where: whereClause }),
+      currentUserId
+        ? this.prisma.user.findUnique({
+            where: { id: currentUserId },
+            include: { profile: true, preference: true },
+          })
+        : Promise.resolve(null),
     ]);
 
     const sanitizedUsers = users.map((user) => {
-      const { passwordHash, ...rest } = user as any;
+      const { passwordHash, receivedConnections, sentConnections, ...rest } = user as any;
 
       const photos = (rest.photos || [])
         .filter((photo: any) => photo.url && !photo.url.includes('pravatar') && !photo.url.includes('unsplash'))
@@ -205,10 +228,73 @@ export class DiscoveryService {
           isVerified: photo.isVerified,
         }));
 
+      let connectionStatus: 'SENT' | 'RECEIVED' | 'MATCHED' | 'SHORTLISTED' | 'REJECTED' | null = null;
+      const sentByMe = receivedConnections?.[0];
+      const sentToMe = sentConnections?.[0];
+
+      if (sentByMe) {
+        if (sentByMe.status === 'ACCEPTED') connectionStatus = 'MATCHED';
+        else if (sentByMe.status === 'SHORTLISTED') connectionStatus = 'SHORTLISTED';
+        else if (sentByMe.status === 'PENDING') connectionStatus = 'SENT';
+        else if (sentByMe.status === 'REJECTED') connectionStatus = 'REJECTED';
+      } else if (sentToMe) {
+        if (sentToMe.status === 'ACCEPTED') connectionStatus = 'MATCHED';
+        else if (sentToMe.status === 'PENDING') connectionStatus = 'RECEIVED';
+        else if (sentToMe.status === 'REJECTED') connectionStatus = 'REJECTED';
+      }
+
+      const FIVE_MINUTES_MS = 5 * 60 * 1000;
+      const lastActive = rest.lastActiveAt ? new Date(rest.lastActiveAt) : null;
+      const isOnline = lastActive
+        ? Date.now() - lastActive.getTime() <= FIVE_MINUTES_MS
+        : false;
+
+      const compatibility = calculateCompatibility(currentUser, user);
+
       return {
         ...rest,
         photos,
+        compatibility,
+        connectionStatus,
+        isOnline,
+        lastActiveAt: rest.lastActiveAt || null,
+        isInterestSent: connectionStatus === 'SENT' || connectionStatus === 'MATCHED',
+        isInterestReceived: connectionStatus === 'RECEIVED',
+        isMatched: connectionStatus === 'MATCHED',
+        isShortlisted: connectionStatus === 'SHORTLISTED',
+        isPassed: connectionStatus === 'REJECTED',
       };
+    });
+
+    // Prioritize fresh/uncontacted profiles at the top, then contacted profiles
+    sanitizedUsers.sort((a, b) => {
+      const isInteractedA = Boolean(
+        a.isInterestSent ||
+        a.isInterestReceived ||
+        a.isPassed ||
+        a.connectionStatus === 'SENT' ||
+        a.connectionStatus === 'RECEIVED' ||
+        a.connectionStatus === 'MATCHED'
+      );
+      const isInteractedB = Boolean(
+        b.isInterestSent ||
+        b.isInterestReceived ||
+        b.isPassed ||
+        b.connectionStatus === 'SENT' ||
+        b.connectionStatus === 'RECEIVED' ||
+        b.connectionStatus === 'MATCHED'
+      );
+
+      if (!isInteractedA && isInteractedB) return -1;
+      if (isInteractedA && !isInteractedB) return 1;
+
+      if (query.sortBy === 'recent') {
+        const timeA = a.lastActiveAt ? new Date(a.lastActiveAt).getTime() : 0;
+        const timeB = b.lastActiveAt ? new Date(b.lastActiveAt).getTime() : 0;
+        return timeB - timeA;
+      }
+
+      return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
     });
 
     return {

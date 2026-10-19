@@ -872,4 +872,23 @@ export class AuthService {
       message: 'Device session logged out successfully',
     };
   }
+
+  async updatePresence(userId: string, sessionId?: string) {
+    const now = new Date();
+    try {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { lastActiveAt: now } as any,
+      });
+      if (sessionId) {
+        await this.prisma.userDevice.updateMany({
+          where: { sessionId },
+          data: { lastActiveAt: now },
+        });
+      }
+    } catch (e: any) {
+      console.warn(`Failed to update presence for ${userId}: ${e?.message}`);
+    }
+    return { success: true, timestamp: now.toISOString() };
+  }
 }

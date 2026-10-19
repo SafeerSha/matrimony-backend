@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { calculateCompatibility } from '../common/utils/compatibility.util';
 
 @Injectable()
 export class ConnectionsService {
@@ -29,6 +30,28 @@ export class ConnectionsService {
     });
 
     if (existing) {
+      // If the target user already sent an interest to the caller and it is PENDING:
+      // Sending interest back forms a mutual match! Automatically accept it.
+      if (existing.senderId === receiverId && existing.receiverId === senderId && existing.status === 'PENDING') {
+        const accepted = await this.prisma.connection.update({
+          where: { id: existing.id },
+          data: { status: 'ACCEPTED' },
+        });
+
+        await this.notificationsService.createNotification(
+          receiverId,
+          'INTEREST_ACCEPTED',
+          'Someone accepted your interest! You have a new match.',
+          senderId
+        );
+
+        return { ...accepted, isMatch: true };
+      }
+
+      if (existing.status === 'ACCEPTED') {
+        return { ...existing, isMatch: true };
+      }
+
       throw new BadRequestException('Connection already exists');
     }
 
@@ -104,15 +127,28 @@ export class ConnectionsService {
       throw new BadRequestException('Cannot shortlist yourself');
     }
 
-    return this.prisma.connection.upsert({
+    const existing = await this.prisma.connection.findFirst({
       where: {
-        senderId_receiverId: {
-          senderId: userId,
-          receiverId: targetId,
-        },
+        OR: [
+          { senderId: userId, receiverId: targetId },
+          { senderId: targetId, receiverId: userId },
+        ],
       },
-      update: { status: 'SHORTLISTED' },
-      create: {
+    });
+
+    if (existing) {
+      // If already connected/accepted or interest pending, keep that primary connection status!
+      if (existing.status === 'ACCEPTED' || existing.status === 'PENDING') {
+        return existing;
+      }
+      return this.prisma.connection.update({
+        where: { id: existing.id },
+        data: { status: 'SHORTLISTED' },
+      });
+    }
+
+    return this.prisma.connection.create({
+      data: {
         senderId: userId,
         receiverId: targetId,
         status: 'SHORTLISTED',
@@ -130,24 +166,34 @@ export class ConnectionsService {
       profile: true,
     };
 
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { profile: true, preference: true },
+    });
+
+    let connections: any[] = [];
+
     switch (type) {
       case 'sent':
-        return this.prisma.connection.findMany({
+        connections = await this.prisma.connection.findMany({
           where: { senderId: userId, status: 'PENDING' },
           include: { receiver: { select: userSelect } },
         });
+        break;
       case 'received':
-        return this.prisma.connection.findMany({
+        connections = await this.prisma.connection.findMany({
           where: { receiverId: userId, status: 'PENDING' },
           include: { sender: { select: userSelect } },
         });
+        break;
       case 'shortlisted':
-        return this.prisma.connection.findMany({
+        connections = await this.prisma.connection.findMany({
           where: { senderId: userId, status: 'SHORTLISTED' },
           include: { receiver: { select: userSelect } },
         });
+        break;
       case 'matches':
-        return this.prisma.connection.findMany({
+        connections = await this.prisma.connection.findMany({
           where: {
             status: 'ACCEPTED',
             OR: [
@@ -160,8 +206,28 @@ export class ConnectionsService {
             receiver: { select: userSelect },
           },
         });
+        break;
       default:
         throw new BadRequestException('Invalid connection type requested');
     }
+
+    return connections.map((conn) => {
+      const partner =
+        type === 'matches'
+          ? conn.senderId === userId
+            ? conn.receiver
+            : conn.sender
+          : conn.receiver || conn.sender;
+
+      if (partner) {
+        const score = calculateCompatibility(currentUser, partner);
+        if (partner.profile) {
+          partner.profile.compatibility = score;
+        }
+        partner.compatibility = score;
+        (conn as any).compatibility = score;
+      }
+      return conn;
+    });
   }
 }

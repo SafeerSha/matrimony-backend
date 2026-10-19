@@ -165,6 +165,14 @@ export class AuthController {
 
   @ApiBearerAuth('JWT-auth')
   @UseGuards(JwtAuthGuard)
+  @Post('heartbeat')
+  async heartbeat(@Request() req: any) {
+    const userId = req.user.sub || req.user.id;
+    return this.authService.updatePresence(userId, req.user.sessionId);
+  }
+
+  @ApiBearerAuth('JWT-auth')
+  @UseGuards(JwtAuthGuard)
   @Get('me')
   getProfile(@Request() req: any) {
     return req.user;
