@@ -123,6 +123,7 @@ describe('ConnectionsService', () => {
     });
 
     it('should upsert connection with SHORTLISTED status', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ id: 'u2' });
       const mockResult = { id: 'c-short', senderId: 'u1', receiverId: 'u2', status: 'SHORTLISTED' };
       mockPrisma.connection.upsert.mockResolvedValue(mockResult);
 

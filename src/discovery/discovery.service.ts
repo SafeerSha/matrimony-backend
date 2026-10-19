@@ -14,6 +14,11 @@ export class DiscoveryService {
     const whereClause: any = {
       id: { not: currentUserId },
       status: 'ACTIVE',
+      email: {
+        not: {
+          endsWith: '@demo.ishtamchat.com',
+        },
+      },
       AND: [
         {
           NOT: {
@@ -134,31 +139,17 @@ export class DiscoveryService {
       this.prisma.user.count({ where: whereClause })
     ]);
 
-    const EXTERNAL_PHOTO_BASE = 'https://i.pravatar.cc';
-
-    const sanitizedUsers = users.map((user, idx) => {
+    const sanitizedUsers = users.map((user) => {
       const { passwordHash, ...rest } = user as any;
 
-      let photos = (rest.photos || []).map((photo: any) => ({
-        id: photo.id,
-        url: photo.url,
-        isPrimary: photo.isPrimary,
-        isVerified: photo.isVerified,
-      }));
-
-      if (!photos.length) {
-        const seed = (rest.firstName || rest.email || rest.id || `user-${idx}`).toString();
-        const avatarUrl = `${EXTERNAL_PHOTO_BASE}/800?u=${encodeURIComponent(seed)}`;
-        photos = [
-          {
-            id: `external-${rest.id || idx}`,
-            url: avatarUrl,
-            isPrimary: true,
-            isVerified: false,
-            source: 'external'
-          }
-        ];
-      }
+      const photos = (rest.photos || [])
+        .filter((photo: any) => photo.url && !photo.url.includes('pravatar'))
+        .map((photo: any) => ({
+          id: photo.id,
+          url: photo.url,
+          isPrimary: photo.isPrimary,
+          isVerified: photo.isVerified,
+        }));
 
       return {
         ...rest,
