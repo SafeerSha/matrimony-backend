@@ -25,6 +25,8 @@ describe('ChatService', () => {
 
   const mockNotifications = {
     createNotification: jest.fn(),
+    upsertMessageNotification: jest.fn(),
+    markMessageNotificationAsRead: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -59,11 +61,11 @@ describe('ChatService', () => {
       const result = await service.sendMessage('user-1', 'user-2', 'hello');
 
       expect(result.id).toBe('m1');
-      expect(mockNotifications.createNotification).toHaveBeenCalledWith(
+      expect(mockNotifications.upsertMessageNotification).toHaveBeenCalledWith(
         'user-2',
-        'NEW_MESSAGE',
-        'You have a new message!',
-        'm1',
+        'user-1',
+        expect.any(String),
+        'hello',
       );
     });
 

@@ -9,7 +9,9 @@ describe('NotificationsService', () => {
   const mockPrisma = {
     notification: {
       create: jest.fn(),
+      findFirst: jest.fn(),
       findMany: jest.fn(),
+      update: jest.fn(),
       updateMany: jest.fn(),
     },
   };
@@ -31,6 +33,15 @@ describe('NotificationsService', () => {
     const result = await service.createNotification('1', 'TEST', 'Test message');
     expect(result.id).toBe('n1');
     expect(prisma.notification.create).toHaveBeenCalled();
+  });
+
+  it('should upsert a message notification by updating existing if present', async () => {
+    mockPrisma.notification.findFirst.mockResolvedValue({ id: 'existing-1' });
+    mockPrisma.notification.update.mockResolvedValue({ id: 'existing-1', content: 'Shahdiya: hi' });
+
+    const result = await service.upsertMessageNotification('rec-1', 'send-1', 'Shahdiya', 'hi');
+    expect(result.id).toBe('existing-1');
+    expect(mockPrisma.notification.update).toHaveBeenCalled();
   });
 
   it('should get user notifications', async () => {

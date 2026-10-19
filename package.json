@@ -18,7 +18,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "db:wipe": "node prisma/wipe-db.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1152.0",

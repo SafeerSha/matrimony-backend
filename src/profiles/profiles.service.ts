@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpdatePreferencesDto, transformToStringOrCsv } from './dto/update-preferences.dto';
 import { sanitizeStringArray, sanitizeText } from '../common/utils/sanitize.util';
+import { calculateCompatibility } from '../common/utils/compatibility.util';
 
 export function calculateAge(dob: Date | string | null | undefined): number | null {
   if (!dob) return null;
@@ -170,46 +171,130 @@ export class ProfilesService {
     };
   }
 
-  async getPublicProfile(userId: string) {
-    const profile = await this.prisma.profile.findFirst({
-      where: {
-        OR: [
-          { userId },
-          { user: { profileId: userId } },
-        ],
-        user: { status: 'ACTIVE' },
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            profileId: true,
-            status: true,
-            isPhoneVerified: true,
-            photos: {
-              where: { isVerified: true },
-              orderBy: [
-                { isPrimary: 'desc' },
-                { createdAt: 'desc' },
-              ],
+  async getPublicProfile(userId: string, viewerId?: string) {
+    const [profile, viewer] = await Promise.all([
+      this.prisma.profile.findFirst({
+        where: {
+          OR: [
+            { userId },
+            { user: { profileId: userId } },
+          ],
+          user: { isBanned: false },
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              profileId: true,
+              status: true,
+              lastActiveAt: true,
+              isPhoneVerified: true,
+              photos: {
+                where: { isVerified: true },
+                orderBy: [
+                  { isPrimary: 'desc' },
+                  { createdAt: 'desc' },
+                ],
+              },
             },
           },
         },
-      },
-    });
+      }),
+      viewerId
+        ? this.prisma.user.findUnique({
+            where: { id: viewerId },
+            include: { profile: true, preference: true },
+          })
+        : Promise.resolve(null),
+    ]);
 
     if (!profile) {
       throw new NotFoundException('Profile not found');
     }
 
     const calculatedAge = calculateAge(profile.dateOfBirth);
+    const lastActive = (profile.user as any)?.lastActiveAt
+      ? new Date((profile.user as any).lastActiveAt)
+      : null;
+    const isOnline = lastActive
+      ? Date.now() - lastActive.getTime() <= 5 * 60 * 1000
+      : false;
+
+    const compatibility = calculateCompatibility(viewer, profile);
+
+    let connectionStatus: 'SENT' | 'RECEIVED' | 'MATCHED' | 'SHORTLISTED' | 'REJECTED' | null = null;
+    let isMatched = false;
+    let isInterestSent = false;
+    let isInterestReceived = false;
+    let isShortlisted = false;
+
+    if (viewerId && profile.userId && viewerId !== profile.userId) {
+      const connection = await this.prisma.connection.findFirst({
+        where: {
+          OR: [
+            { senderId: viewerId, receiverId: profile.userId },
+            { senderId: profile.userId, receiverId: viewerId },
+          ],
+        },
+      });
+
+      // Also verify if messages were exchanged between the two users
+      const hasMessages = !connection || connection.status !== 'ACCEPTED'
+        ? await this.prisma.message.findFirst({
+            where: {
+              OR: [
+                { senderId: viewerId, receiverId: profile.userId },
+                { senderId: profile.userId, receiverId: viewerId },
+              ],
+            },
+            select: { id: true },
+          })
+        : null;
+
+      if (connection) {
+        if (connection.status === 'ACCEPTED' || hasMessages) {
+          connectionStatus = 'MATCHED';
+          isMatched = true;
+          isInterestSent = true;
+        } else if (connection.senderId === viewerId) {
+          if (connection.status === 'PENDING') {
+            connectionStatus = 'SENT';
+            isInterestSent = true;
+          } else if (connection.status === 'SHORTLISTED') {
+            connectionStatus = 'SHORTLISTED';
+            isShortlisted = true;
+          } else if (connection.status === 'REJECTED') {
+            connectionStatus = 'REJECTED';
+          }
+        } else {
+          if (connection.status === 'PENDING') {
+            connectionStatus = 'RECEIVED';
+            isInterestReceived = true;
+          } else if (connection.status === 'REJECTED') {
+            connectionStatus = 'REJECTED';
+          }
+        }
+      } else if (hasMessages) {
+        connectionStatus = 'MATCHED';
+        isMatched = true;
+        isInterestSent = true;
+      }
+    }
 
     return {
       ...profile,
       age: calculatedAge,
+      compatibility,
+      isOnline,
+      lastActiveAt: lastActive ? lastActive.toISOString() : null,
       photos: profile.user?.photos || [],
+      connectionStatus,
+      isMatched,
+      isInterestSent,
+      isInterestReceived,
+      isShortlisted,
     };
   }
 

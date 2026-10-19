@@ -32,8 +32,8 @@ export class ProfilesController {
   }
 
   @Get(':id')
-  async getPublicProfile(@Param('id') id: string) {
-    return this.profilesService.getPublicProfile(id);
+  async getPublicProfile(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.profilesService.getPublicProfile(id, user?.sub);
   }
 
   @Put('me')
