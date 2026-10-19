@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SearchQueryDto } from './dto/search-query.dto';
+import { calculateCompatibility } from '../common/utils/compatibility.util';
 
 @Injectable()
 export class DiscoveryService {
@@ -14,27 +15,20 @@ export class DiscoveryService {
     const whereClause: any = {
       id: { not: currentUserId },
       status: 'ACTIVE',
-      email: {
-        not: {
-          endsWith: '@demo.ishtamchat.com',
-        },
-      },
-      AND: [
+      NOT: [
+        { email: { contains: 'demo.ishtamchat.com' } },
+        { id: { in: ['meera', 'ananya'] } },
         {
-          NOT: {
-            receivedConnections: {
-              some: { senderId: currentUserId },
-            },
+          receivedConnections: {
+            some: { senderId: currentUserId, status: 'BLOCKED' },
           },
         },
         {
-          NOT: {
-            sentConnections: {
-              some: { receiverId: currentUserId },
-            },
+          sentConnections: {
+            some: { receiverId: currentUserId, status: 'BLOCKED' },
           },
-        }
-      ]
+        },
+      ],
     };
 
     const profileConditions: any[] = [];
@@ -116,13 +110,83 @@ export class DiscoveryService {
       profileConditions.push({ dateOfBirth: dobFilter });
     }
 
+    // Foundation Matchmaking Filter: Opposite gender based on logged-in user
+    let targetGender = query.gender;
+    if (currentUserId) {
+      const currentUser = await this.prisma.user.findUnique({
+        where: { id: currentUserId },
+        select: { profile: { select: { gender: true } } },
+      });
+      const userGender = (currentUser?.profile?.gender || '').toLowerCase().trim();
+      if (userGender === 'male' || userGender === 'man') {
+        targetGender = 'women';
+      } else if (userGender === 'female' || userGender === 'woman') {
+        targetGender = 'men';
+      }
+    }
+
+    if (targetGender && targetGender !== 'any') {
+      const g = targetGender.toLowerCase();
+      if (g === 'women' || g === 'female') {
+        profileConditions.push({
+          gender: { in: ['female', 'Female', 'women', 'Women'] }
+        });
+      } else if (g === 'men' || g === 'male') {
+        profileConditions.push({
+          gender: { in: ['male', 'Male', 'men', 'Men'] }
+        });
+      } else {
+        profileConditions.push({
+          gender: { equals: targetGender, mode: 'insensitive' }
+        });
+      }
+    }
+
+    if (query.caste && query.caste !== 'Any') {
+      profileConditions.push({
+        caste: { contains: query.caste, mode: 'insensitive' }
+      });
+    }
+
+    const rawIncome = (query.income || query.annualIncome || '').trim();
+    if (rawIncome && rawIncome !== 'Any') {
+      profileConditions.push({
+        annualIncome: { contains: rawIncome, mode: 'insensitive' }
+      });
+    }
+
+    if (query.intent && query.intent !== 'Any') {
+      profileConditions.push({
+        OR: [
+          { category: { contains: query.intent, mode: 'insensitive' } },
+          { lookingFor: { contains: query.intent, mode: 'insensitive' } }
+        ]
+      });
+    }
+
+    const rawLang = (query.language || query.motherTongue || '').trim();
+    if (rawLang && rawLang !== 'Any') {
+      profileConditions.push({
+        motherTongue: { contains: rawLang, mode: 'insensitive' }
+      });
+    }
+
+    if (query.diet && query.diet !== "Doesn't Matter" && query.diet !== 'Any') {
+      profileConditions.push({
+        OR: [
+          { lifestyle: { hasSome: [query.diet, query.diet.toLowerCase(), query.diet.toUpperCase()] } },
+          { bio: { contains: query.diet, mode: 'insensitive' } }
+        ]
+      });
+    }
+
     if (profileConditions.length > 0) {
       whereClause.profile = {
         AND: profileConditions,
       };
     }
 
-    const [users, total] = await Promise.all([
+    const [users, total, currentUser] = await Promise.all([
       this.prisma.user.findMany({
         where: whereClause,
         skip,
@@ -130,20 +194,33 @@ export class DiscoveryService {
         include: {
           profile: true,
           photos: {
-            where: { isVerified: true },
             orderBy: { createdAt: 'desc' }
+          },
+          receivedConnections: {
+            where: { senderId: currentUserId },
+            select: { status: true, id: true }
+          },
+          sentConnections: {
+            where: { receiverId: currentUserId },
+            select: { status: true, id: true }
           }
         },
         orderBy: { createdAt: 'desc' }
       }),
-      this.prisma.user.count({ where: whereClause })
+      this.prisma.user.count({ where: whereClause }),
+      currentUserId
+        ? this.prisma.user.findUnique({
+            where: { id: currentUserId },
+            include: { profile: true, preference: true },
+          })
+        : Promise.resolve(null),
     ]);
 
     const sanitizedUsers = users.map((user) => {
-      const { passwordHash, ...rest } = user as any;
+      const { passwordHash, receivedConnections, sentConnections, ...rest } = user as any;
 
       const photos = (rest.photos || [])
-        .filter((photo: any) => photo.url && !photo.url.includes('pravatar'))
+        .filter((photo: any) => photo.url && !photo.url.includes('pravatar') && !photo.url.includes('unsplash'))
         .map((photo: any) => ({
           id: photo.id,
           url: photo.url,
@@ -151,10 +228,73 @@ export class DiscoveryService {
           isVerified: photo.isVerified,
         }));
 
+      let connectionStatus: 'SENT' | 'RECEIVED' | 'MATCHED' | 'SHORTLISTED' | 'REJECTED' | null = null;
+      const sentByMe = receivedConnections?.[0];
+      const sentToMe = sentConnections?.[0];
+
+      if (sentByMe) {
+        if (sentByMe.status === 'ACCEPTED') connectionStatus = 'MATCHED';
+        else if (sentByMe.status === 'SHORTLISTED') connectionStatus = 'SHORTLISTED';
+        else if (sentByMe.status === 'PENDING') connectionStatus = 'SENT';
+        else if (sentByMe.status === 'REJECTED') connectionStatus = 'REJECTED';
+      } else if (sentToMe) {
+        if (sentToMe.status === 'ACCEPTED') connectionStatus = 'MATCHED';
+        else if (sentToMe.status === 'PENDING') connectionStatus = 'RECEIVED';
+        else if (sentToMe.status === 'REJECTED') connectionStatus = 'REJECTED';
+      }
+
+      const FIVE_MINUTES_MS = 5 * 60 * 1000;
+      const lastActive = rest.lastActiveAt ? new Date(rest.lastActiveAt) : null;
+      const isOnline = lastActive
+        ? Date.now() - lastActive.getTime() <= FIVE_MINUTES_MS
+        : false;
+
+      const compatibility = calculateCompatibility(currentUser, user);
+
       return {
         ...rest,
         photos,
+        compatibility,
+        connectionStatus,
+        isOnline,
+        lastActiveAt: rest.lastActiveAt || null,
+        isInterestSent: connectionStatus === 'SENT' || connectionStatus === 'MATCHED',
+        isInterestReceived: connectionStatus === 'RECEIVED',
+        isMatched: connectionStatus === 'MATCHED',
+        isShortlisted: connectionStatus === 'SHORTLISTED',
+        isPassed: connectionStatus === 'REJECTED',
       };
+    });
+
+    // Prioritize fresh/uncontacted profiles at the top, then contacted profiles
+    sanitizedUsers.sort((a, b) => {
+      const isInteractedA = Boolean(
+        a.isInterestSent ||
+        a.isInterestReceived ||
+        a.isPassed ||
+        a.connectionStatus === 'SENT' ||
+        a.connectionStatus === 'RECEIVED' ||
+        a.connectionStatus === 'MATCHED'
+      );
+      const isInteractedB = Boolean(
+        b.isInterestSent ||
+        b.isInterestReceived ||
+        b.isPassed ||
+        b.connectionStatus === 'SENT' ||
+        b.connectionStatus === 'RECEIVED' ||
+        b.connectionStatus === 'MATCHED'
+      );
+
+      if (!isInteractedA && isInteractedB) return -1;
+      if (isInteractedA && !isInteractedB) return 1;
+
+      if (query.sortBy === 'recent') {
+        const timeA = a.lastActiveAt ? new Date(a.lastActiveAt).getTime() : 0;
+        const timeB = b.lastActiveAt ? new Date(b.lastActiveAt).getTime() : 0;
+        return timeB - timeA;
+      }
+
+      return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
     });
 
     return {
@@ -169,23 +309,64 @@ export class DiscoveryService {
   }
 
   async getRecommendations(currentUserId: string) {
-    const userPref = await this.prisma.preference.findUnique({
-      where: { userId: currentUserId }
+    const user = await this.prisma.user.findUnique({
+      where: { id: currentUserId },
+      include: {
+        profile: true,
+        preference: true,
+      },
     });
 
-    if (!userPref) {
+    if (!user) {
       return this.searchProfiles({}, currentUserId);
     }
 
+    const userPref = user.preference;
+    const profilePrefs = (user.profile?.preferences || {}) as any;
+
     const query = new SearchQueryDto();
-    if (userPref.minAge) query.minAge = userPref.minAge.toString();
-    if (userPref.maxAge) query.maxAge = userPref.maxAge.toString();
-    if (userPref.education) query.education = userPref.education;
-    if (userPref.occupations) query.occupation = userPref.occupations;
-    if (userPref.employmentStatuses) query.employmentStatus = userPref.employmentStatuses;
-    
+    const minAge = userPref?.minAge ?? profilePrefs.minAge;
+    const maxAge = userPref?.maxAge ?? profilePrefs.maxAge;
+    if (minAge) query.minAge = minAge.toString();
+    if (maxAge) query.maxAge = maxAge.toString();
+
+    const education = userPref?.education ?? (Array.isArray(profilePrefs.education) ? profilePrefs.education[0] : profilePrefs.education);
+    if (education && education !== 'Any qualification' && education !== 'Any') query.education = education;
+
+    const occupation = userPref?.occupations ?? (Array.isArray(profilePrefs.professions) ? profilePrefs.professions[0] : profilePrefs.professions);
+    if (occupation && occupation !== 'Any profession' && occupation !== 'Any') query.occupation = occupation;
+
+    const employmentStatus = userPref?.employmentStatuses ?? (Array.isArray(profilePrefs.employmentStatuses) ? profilePrefs.employmentStatuses[0] : profilePrefs.employmentStatuses);
+    if (employmentStatus) query.employmentStatus = employmentStatus;
+
+    const religion = userPref?.religions ?? (Array.isArray(profilePrefs.religions) ? profilePrefs.religions[0] : profilePrefs.religions);
+    if (religion && religion !== 'Open to all communities' && religion !== 'Any') query.religion = religion;
+
+    const city = userPref?.location ?? (Array.isArray(profilePrefs.locations) ? profilePrefs.locations[0] : profilePrefs.locations);
+    if (city && city !== 'Any location' && city !== 'All locations') query.city = city;
+
+    const maritalStatus = userPref?.maritalStatuses ?? (Array.isArray(profilePrefs.maritalStatus) ? profilePrefs.maritalStatus[0] : profilePrefs.maritalStatus);
+    if (maritalStatus && maritalStatus !== 'Open to All' && maritalStatus !== 'Any') query.maritalStatus = maritalStatus;
+
+    if (profilePrefs.gender && profilePrefs.gender !== 'any') {
+      query.gender = profilePrefs.gender;
+    } else if (user.profile?.gender) {
+      const g = user.profile.gender.toLowerCase();
+      if (g === 'male' || g === 'man') query.gender = 'women';
+      else if (g === 'female' || g === 'woman') query.gender = 'men';
+    }
+
+    if (profilePrefs.caste && profilePrefs.caste !== 'Any') {
+      query.caste = profilePrefs.caste;
+    }
+
+    const diet = userPref?.diet ?? (Array.isArray(profilePrefs.diet) ? profilePrefs.diet[0] : profilePrefs.diet);
+    if (diet && diet !== "Doesn't Matter" && diet !== 'Any') {
+      query.diet = diet;
+    }
+
     query.limit = '10';
-    
+
     return this.searchProfiles(query, currentUserId);
   }
 }

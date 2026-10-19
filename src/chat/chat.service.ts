@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { calculateCompatibility } from '../common/utils/compatibility.util';
 
 @Injectable()
 export class ChatService {
@@ -17,84 +18,76 @@ export class ChatService {
    * Retrieves active conversations for the authenticated user based on accepted connections.
    */
   async getConversations(userId: string) {
-    const connections = await this.prisma.connection.findMany({
-      where: {
-        status: 'ACCEPTED',
-        OR: [{ senderId: userId }, { receiverId: userId }],
-      },
-      include: {
-        sender: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            isPhoneVerified: true,
-            isEmailVerified: true,
-            status: true,
-            profile: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                city: true,
-                occupation: true,
-              },
-            },
-            photos: {
-              select: {
-                id: true,
-                url: true,
-                isPrimary: true,
-                isVerified: true,
-                createdAt: true,
-              },
-            },
-          },
+    const [connections, currentUser] = await Promise.all([
+      this.prisma.connection.findMany({
+        where: {
+          status: 'ACCEPTED',
+          OR: [{ senderId: userId }, { receiverId: userId }],
         },
-        receiver: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            isPhoneVerified: true,
-            isEmailVerified: true,
-            status: true,
-            profile: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                city: true,
-                occupation: true,
+        include: {
+          sender: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              isPhoneVerified: true,
+              isEmailVerified: true,
+              status: true,
+              lastActiveAt: true,
+              profile: true,
+              photos: {
+                select: {
+                  id: true,
+                  url: true,
+                  isPrimary: true,
+                  isVerified: true,
+                  createdAt: true,
+                },
               },
-            },
-            photos: {
-              select: {
-                id: true,
-                url: true,
-                isPrimary: true,
-                isVerified: true,
-                createdAt: true,
-              },
-            },
+            } as any,
           },
-        },
-      },
-    });
+          receiver: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              isPhoneVerified: true,
+              isEmailVerified: true,
+              status: true,
+              lastActiveAt: true,
+              profile: true,
+              photos: {
+                select: {
+                  id: true,
+                  url: true,
+                  isPrimary: true,
+                  isVerified: true,
+                  createdAt: true,
+                },
+              },
+            } as any,
+          },
+        } as any,
+      }),
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        include: { profile: true, preference: true },
+      }),
+    ]);
 
     const conversations = await Promise.all(
-      connections.map(async (connection) => {
-        const partner =
+      connections.map(async (connection: any) => {
+        const partner: any =
           connection.senderId === userId ? connection.receiver : connection.sender;
 
-        const sortedPhotos = [...(partner.photos || [])].sort((a, b) => {
+        const sortedPhotos = [...(partner?.photos || [])].sort((a: any, b: any) => {
           if (a.isPrimary === b.isPrimary) {
             return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
           }
           return a.isPrimary ? -1 : 1;
         });
 
-        const formattedPhotos = sortedPhotos.map((p) => ({
+        const formattedPhotos = sortedPhotos.map((p: any) => ({
           id: p.id,
           url: p.url,
           isPrimary: p.isPrimary,
@@ -102,10 +95,10 @@ export class ChatService {
         }));
 
         const isVerified = Boolean(
-          partner.isPhoneVerified ||
-            partner.isEmailVerified ||
-            partner.status === 'ACTIVE' ||
-            partner.photos?.some((p) => p.isVerified),
+          partner?.isPhoneVerified ||
+            partner?.isEmailVerified ||
+            partner?.status === 'ACTIVE' ||
+            partner?.photos?.some((p: any) => p.isVerified),
         );
 
         const lastMessage = await this.prisma.message.findFirst({
@@ -137,10 +130,22 @@ export class ChatService {
 
         const updatedAt = lastMessage ? lastMessage.createdAt : connection.updatedAt;
 
+        const FIVE_MINUTES_MS = 5 * 60 * 1000;
+        const lastActive = (partner as any).lastActiveAt ? new Date((partner as any).lastActiveAt) : null;
+        const isOnline = lastActive
+          ? Date.now() - lastActive.getTime() <= FIVE_MINUTES_MS
+          : false;
+
+        const compatibility = calculateCompatibility(currentUser, partner);
+
         return {
           id: partner.id,
           connectionId: connection.id,
           participantId: partner.id,
+          online: isOnline,
+          isOnline,
+          lastActiveAt: (partner as any).lastActiveAt || null,
+          compatibility,
           participant: {
             id: partner.id,
             userId: partner.id,
@@ -151,6 +156,10 @@ export class ChatService {
             city: partner.profile?.city || null,
             occupation: partner.profile?.occupation || null,
             isVerified,
+            online: isOnline,
+            isOnline,
+            lastActiveAt: (partner as any).lastActiveAt || null,
+            compatibility,
           },
           lastMessage: lastMessage || null,
           unreadCount,
@@ -165,12 +174,12 @@ export class ChatService {
   }
 
   /**
-   * Retrieves message history between two matched users.
+   * Retrieves message history between two users.
    */
   async getChatHistory(userId: string, contactId: string) {
-    const connection = await this.prisma.connection.findFirst({
+    const blocked = await this.prisma.connection.findFirst({
       where: {
-        status: 'ACCEPTED',
+        status: 'BLOCKED',
         OR: [
           { senderId: userId, receiverId: contactId },
           { senderId: contactId, receiverId: userId },
@@ -178,8 +187,8 @@ export class ChatService {
       },
     });
 
-    if (!connection) {
-      throw new ForbiddenException('You can only message matched profiles.');
+    if (blocked) {
+      throw new ForbiddenException('Cannot view chat with this profile.');
     }
 
     return this.prisma.message.findMany({
@@ -203,7 +212,7 @@ export class ChatService {
   }
 
   /**
-   * Sends a message to a matched partner and triggers notification.
+   * Sends a message to a partner, establishes connection if needed, and triggers notification.
    */
   async sendMessage(senderId: string, receiverId: string, content: string) {
     if (senderId === receiverId) {
@@ -215,9 +224,18 @@ export class ChatService {
       throw new BadRequestException('Message content cannot be empty.');
     }
 
-    const connection = await this.prisma.connection.findFirst({
+    // Verify recipient exists and is not banned
+    const receiver = await this.prisma.user.findUnique({
+      where: { id: receiverId },
+      select: { id: true, isBanned: true },
+    });
+    if (!receiver || receiver.isBanned) {
+      throw new BadRequestException('Recipient is not available.');
+    }
+
+    const blocked = await this.prisma.connection.findFirst({
       where: {
-        status: 'ACCEPTED',
+        status: 'BLOCKED',
         OR: [
           { senderId, receiverId },
           { senderId: receiverId, receiverId: senderId },
@@ -225,8 +243,33 @@ export class ChatService {
       },
     });
 
-    if (!connection) {
-      throw new ForbiddenException('You can only message matched profiles.');
+    if (blocked) {
+      throw new ForbiddenException('Cannot message this profile.');
+    }
+
+    // Ensure connection is established and accepted so mutual conversations/matches are active
+    const existingConnection = await this.prisma.connection.findFirst({
+      where: {
+        OR: [
+          { senderId, receiverId },
+          { senderId: receiverId, receiverId: senderId },
+        ],
+      },
+    });
+
+    if (!existingConnection) {
+      await this.prisma.connection.create({
+        data: {
+          senderId,
+          receiverId,
+          status: 'ACCEPTED',
+        },
+      });
+    } else if (existingConnection.status !== 'ACCEPTED') {
+      await this.prisma.connection.update({
+        where: { id: existingConnection.id },
+        data: { status: 'ACCEPTED' },
+      });
     }
 
     const message = await this.prisma.message.create({
@@ -252,11 +295,22 @@ export class ChatService {
       },
     });
 
-    await this.notificationsService.createNotification(
+    const sender = await this.prisma.user.findUnique({
+      where: { id: senderId },
+      include: {
+        profile: true,
+      },
+    });
+
+    const senderName =
+      `${sender?.profile?.firstName || sender?.firstName || ''} ${sender?.profile?.lastName || sender?.lastName || ''}`.trim() ||
+      'Member';
+
+    await this.notificationsService.upsertMessageNotification(
       receiverId,
-      'NEW_MESSAGE',
-      'You have a new message!',
-      message.id,
+      senderId,
+      senderName,
+      trimmed,
     );
 
     return message;
@@ -276,6 +330,8 @@ export class ChatService {
         isRead: true,
       },
     });
+
+    await this.notificationsService.markMessageNotificationAsRead(userId, contactId);
 
     return { success: true };
   }

@@ -11,6 +11,7 @@ import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { Logger } from '@nestjs/common';
 import { ChatService } from './chat.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 @WebSocketGateway({
   cors: {
@@ -28,7 +29,12 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   constructor(
     private readonly jwtService: JwtService,
     private readonly chatService: ChatService,
+    private readonly prisma: PrismaService,
   ) {}
+
+  isUserOnline(userId: string): boolean {
+    return this.userSockets.has(userId);
+  }
 
   async handleConnection(client: Socket) {
     try {
@@ -50,6 +56,22 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.userSockets.set(userId, client.id);
       client.data.user = payload;
       this.logger.log(`User ${userId} authenticated on socket ${client.id}`);
+
+      // Update lastActiveAt in database and broadcast live presence
+      try {
+        await this.prisma.user.update({
+          where: { id: userId },
+          data: { lastActiveAt: new Date() } as any,
+        });
+      } catch (e: any) {
+        this.logger.warn(`Failed updating lastActiveAt for ${userId}: ${e?.message}`);
+      }
+
+      this.server.emit('user_presence', {
+        userId,
+        isOnline: true,
+        lastActiveAt: new Date().toISOString(),
+      });
     } catch (error: any) {
       this.logger.warn(
         `Socket authentication failed for client ${client.id}: ${error?.message}`,
@@ -58,11 +80,27 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
-  handleDisconnect(client: Socket) {
+  async handleDisconnect(client: Socket) {
     const userId = client.data?.user?.sub;
     if (userId && this.userSockets.get(userId) === client.id) {
       this.userSockets.delete(userId);
       this.logger.log(`User ${userId} disconnected from socket ${client.id}`);
+
+      const now = new Date();
+      try {
+        await this.prisma.user.update({
+          where: { id: userId },
+          data: { lastActiveAt: now } as any,
+        });
+      } catch (e: any) {
+        this.logger.warn(`Failed updating lastActiveAt on disconnect for ${userId}: ${e?.message}`);
+      }
+
+      this.server.emit('user_presence', {
+        userId,
+        isOnline: false,
+        lastActiveAt: now.toISOString(),
+      });
     }
   }
 
@@ -73,6 +111,41 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return true;
     }
     return false;
+  }
+
+  @SubscribeMessage('heartbeat')
+  async handleHeartbeat(@ConnectedSocket() client: Socket) {
+    const userId = client.data?.user?.sub;
+    if (userId) {
+      const now = new Date();
+      this.userSockets.set(userId, client.id);
+      try {
+        await this.prisma.user.update({
+          where: { id: userId },
+          data: { lastActiveAt: now } as any,
+        });
+      } catch {}
+      return { event: 'heartbeat_ack', data: { timestamp: now.toISOString(), isOnline: true } };
+    }
+    return { event: 'heartbeat_ack', data: { isOnline: false } };
+  }
+
+  @SubscribeMessage('check_online')
+  handleCheckOnline(@MessageBody() payload: { userId?: string; userIds?: string[] }) {
+    if (payload?.userId) {
+      return {
+        event: 'user_presence',
+        data: { userId: payload.userId, isOnline: this.userSockets.has(payload.userId) },
+      };
+    }
+    if (Array.isArray(payload?.userIds)) {
+      const statuses: Record<string, boolean> = {};
+      for (const id of payload.userIds) {
+        statuses[id] = this.userSockets.has(id);
+      }
+      return { event: 'batch_presence', data: statuses };
+    }
+    return { event: 'batch_presence', data: {} };
   }
 
   @SubscribeMessage('send_message')
@@ -107,6 +180,34 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return { event: 'message_sent', data: message };
     } catch (error: any) {
       return { event: 'error', data: error.message || 'Failed to send message' };
+    }
+  }
+
+  @SubscribeMessage('mark_read')
+  async handleMarkRead(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: { contactId: string },
+  ) {
+    const userId = client.data?.user?.sub;
+    if (!userId || !payload?.contactId) {
+      return { event: 'error', data: 'Unauthorized or missing contactId' };
+    }
+
+    try {
+      await this.chatService.markAsRead(userId, payload.contactId);
+
+      // Notify the sender that their messages have been read
+      const senderSocketId = this.userSockets.get(payload.contactId);
+      if (senderSocketId) {
+        this.server.to(senderSocketId).emit('messages_read', {
+          readerId: userId,
+          contactId: payload.contactId,
+        });
+      }
+
+      return { event: 'mark_read_ack', data: { success: true } };
+    } catch (error: any) {
+      return { event: 'error', data: error.message || 'Failed to mark as read' };
     }
   }
 

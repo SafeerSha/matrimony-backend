@@ -2,6 +2,7 @@ import { Injectable, BadRequestException, NotFoundException, Inject, forwardRef 
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ChatGateway } from '../chat/chat.gateway';
+import { calculateCompatibility } from '../common/utils/compatibility.util';
 
 @Injectable()
 export class ConnectionsService {
@@ -9,7 +10,7 @@ export class ConnectionsService {
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
     @Inject(forwardRef(() => ChatGateway))
-    private readonly chatGateway: ChatGateway
+    private readonly chatGateway: ChatGateway,
   ) {}
 
   private formatPartnerPayload(user: any) {
@@ -54,6 +55,8 @@ export class ConnectionsService {
     });
 
     if (existing) {
+      // If the target user already sent an interest to the caller and it is PENDING:
+      // Sending interest back forms a mutual match! Automatically accept it.
       if (existing.senderId === receiverId && existing.receiverId === senderId && existing.status === 'PENDING') {
         const accepted = await this.prisma.connection.update({
           where: { id: existing.id },
@@ -87,7 +90,7 @@ export class ConnectionsService {
           receiverId,
           'MATCH_ACCEPTED',
           'Your interest was accepted! You have a mutual match.',
-          senderId
+          senderId,
         );
 
         const partnerForReceiver = this.formatPartnerPayload(accepted.sender);
@@ -143,7 +146,7 @@ export class ConnectionsService {
         receiverId,
         'NEW_INTEREST',
         'Someone sent you an interest!',
-        senderId
+        senderId,
       );
 
       return {
@@ -176,7 +179,7 @@ export class ConnectionsService {
       receiverId,
       'NEW_INTEREST',
       'Someone sent you an interest!',
-      senderId
+      senderId,
     );
 
     return {
@@ -231,7 +234,7 @@ export class ConnectionsService {
       senderId,
       'MATCH_ACCEPTED',
       'Your interest was accepted! You have a mutual match.',
-      receiverId
+      receiverId,
     );
 
     const partnerForSender = this.formatPartnerPayload(updated.receiver);
@@ -279,15 +282,28 @@ export class ConnectionsService {
       throw new NotFoundException('User not found');
     }
 
-    return await this.prisma.connection.upsert({
+    const existing = await this.prisma.connection.findFirst({
       where: {
-        senderId_receiverId: {
-          senderId: userId,
-          receiverId: targetId,
-        },
+        OR: [
+          { senderId: userId, receiverId: targetId },
+          { senderId: targetId, receiverId: userId },
+        ],
       },
-      update: { status: 'SHORTLISTED' },
-      create: {
+    });
+
+    if (existing) {
+      // If already connected/accepted or interest pending, keep that primary connection status!
+      if (existing.status === 'ACCEPTED' || existing.status === 'PENDING') {
+        return existing;
+      }
+      return this.prisma.connection.update({
+        where: { id: existing.id },
+        data: { status: 'SHORTLISTED' },
+      });
+    }
+
+    return this.prisma.connection.create({
+      data: {
         senderId: userId,
         receiverId: targetId,
         status: 'SHORTLISTED',
@@ -340,88 +356,76 @@ export class ConnectionsService {
     userId: string,
     type: 'sent' | 'received' | 'matches' | 'shortlisted' | 'shortlisted_by_me' | 'shortlisted_you',
   ) {
+    const userSelect = {
+      id: true,
+      firstName: true,
+      lastName: true,
+      profileId: true,
+      photos: { select: { url: true, isPrimary: true, isVerified: true } },
+      profile: true,
+    };
+
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { profile: true, preference: true },
+    });
+
+    let connections: any[] = [];
+
     switch (type) {
-      case 'sent':
-        return this.prisma.connection.findMany({
+      case 'sent': {
+        const sent = await this.prisma.connection.findMany({
           where: { senderId: userId, status: 'PENDING' },
-          include: {
-            receiver: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                profileId: true,
-                profile: true,
-                photos: { select: { url: true, isPrimary: true, isVerified: true } },
-              },
-            },
-          },
+          include: { receiver: { select: userSelect } },
           orderBy: { createdAt: 'desc' },
         });
-      case 'received':
-        return this.prisma.connection.findMany({
+        connections = sent.map((c: any) => ({
+          ...c,
+          partner: c.receiver,
+        }));
+        break;
+      }
+
+      case 'received': {
+        const received = await this.prisma.connection.findMany({
           where: { receiverId: userId, status: 'PENDING' },
-          include: {
-            sender: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                profileId: true,
-                profile: true,
-                photos: { select: { url: true, isPrimary: true, isVerified: true } },
-              },
-            },
-          },
+          include: { sender: { select: userSelect } },
           orderBy: { createdAt: 'desc' },
         });
+        connections = received.map((c: any) => ({
+          ...c,
+          partner: c.sender,
+        }));
+        break;
+      }
+
       case 'shortlisted':
       case 'shortlisted_by_me': {
         const shortlists = await this.prisma.connection.findMany({
           where: { senderId: userId, status: 'SHORTLISTED' },
-          include: {
-            receiver: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                profileId: true,
-                profile: true,
-                photos: { select: { url: true, isPrimary: true, isVerified: true } },
-              },
-            },
-          },
+          include: { receiver: { select: userSelect } },
           orderBy: { updatedAt: 'desc' },
         });
-
-        return shortlists.map((s: any) => ({
+        connections = shortlists.map((s: any) => ({
           ...s,
           partner: s.receiver,
         }));
+        break;
       }
+
       case 'shortlisted_you': {
         const shortlists = await this.prisma.connection.findMany({
           where: { receiverId: userId, status: 'SHORTLISTED' },
-          include: {
-            sender: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                profileId: true,
-                profile: true,
-                photos: { select: { url: true, isPrimary: true, isVerified: true } },
-              },
-            },
-          },
+          include: { sender: { select: userSelect } },
           orderBy: { updatedAt: 'desc' },
         });
-
-        return shortlists.map((s: any) => ({
+        connections = shortlists.map((s: any) => ({
           ...s,
           partner: s.sender,
         }));
+        break;
       }
+
       case 'matches': {
         const matches = await this.prisma.connection.findMany({
           where: {
@@ -432,31 +436,13 @@ export class ConnectionsService {
             ],
           },
           include: {
-            sender: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                profileId: true,
-                profile: true,
-                photos: { select: { url: true, isPrimary: true, isVerified: true } },
-              },
-            },
-            receiver: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                profileId: true,
-                profile: true,
-                photos: { select: { url: true, isPrimary: true, isVerified: true } },
-              },
-            },
+            sender: { select: userSelect },
+            receiver: { select: userSelect },
           },
           orderBy: { updatedAt: 'desc' },
         });
 
-        return matches.map((m: any) => {
+        connections = matches.map((m: any) => {
           const isSender = m.senderId === userId;
           const partner = isSender ? m.receiver : m.sender;
           return {
@@ -465,9 +451,31 @@ export class ConnectionsService {
             isMutualMatch: true,
           };
         });
+        break;
       }
+
       default:
         throw new BadRequestException('Invalid connection type requested');
     }
+
+    return connections.map((conn) => {
+      const partner =
+        conn.partner ||
+        (type === 'matches'
+          ? conn.senderId === userId
+            ? conn.receiver
+            : conn.sender
+          : conn.receiver || conn.sender);
+
+      if (partner) {
+        const score = calculateCompatibility(currentUser, partner);
+        if (partner.profile) {
+          partner.profile.compatibility = score;
+        }
+        partner.compatibility = score;
+        (conn as any).compatibility = score;
+      }
+      return conn;
+    });
   }
 }
