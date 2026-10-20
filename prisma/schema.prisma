@@ -71,6 +71,16 @@ model Profile {
   interests        String[]  @default([])
   lookingFor       String?
   preferences      Json?
+  fatherName       String?
+  nationality      String?   @default("Indian")
+  permanentAddress String?
+  fatherAlive      Boolean?  @default(true)
+  motherAlive      Boolean?  @default(true)
+  brothersCount    Int?      @default(0)
+  brothersMarried  Int?      @default(0)
+  sistersCount     Int?      @default(0)
+  sistersMarried   Int?      @default(0)
+  familyDetails    Json?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 }

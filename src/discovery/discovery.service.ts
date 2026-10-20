@@ -249,10 +249,18 @@ export class DiscoveryService {
         ? Date.now() - lastActive.getTime() <= FIVE_MINUTES_MS
         : false;
 
-      const compatibility = calculateCompatibility(currentUser, user);
+      const cleanProfile = rest.profile ? { ...rest.profile } : null;
+      if (cleanProfile) {
+        delete cleanProfile.permanentAddress;
+      }
+      delete rest.phone;
+      delete rest.email;
+
+      const compatibility = currentUser ? calculateCompatibility(currentUser, user) : 85;
 
       return {
         ...rest,
+        profile: cleanProfile,
         photos,
         compatibility,
         connectionStatus,

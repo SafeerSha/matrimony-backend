@@ -13,16 +13,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([
+        ExtractJwt.fromAuthHeaderAsBearerToken(),
         (request: Request) => {
-          let token = null;
-          if (request && request.cookies) {
-            token = request.cookies['__Host-matrimony_session'];
-          }
-          if (!token && request.headers.authorization) {
-             const parts = request.headers.authorization.split(' ');
-             if (parts.length === 2) token = parts[1];
-          }
-          return token;
+          if (!request || !request.cookies) return null;
+          return (
+            request.cookies['matrimony_session'] ||
+            request.cookies['__Host-matrimony_session'] ||
+            null
+          );
         },
       ]),
       ignoreExpiration: false,

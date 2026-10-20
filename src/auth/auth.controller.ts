@@ -16,10 +16,10 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { parseUserAgentAndHeaders, ParsedDeviceInfo } from '../common/utils/device-parser.util';
 
 const isProd = process.env.NODE_ENV === 'production';
-const OTP_LIMIT = isProd ? 3 : 100;
-const OTP_TTL = isProd ? 600000 : 60000;
+const OTP_LIMIT = isProd ? 5 : 100;
+const OTP_TTL = isProd ? 60000 : 60000;
 const VERIFY_LIMIT = isProd ? 5 : 100;
-const VERIFY_TTL = isProd ? 600000 : 60000;
+const VERIFY_TTL = isProd ? 60000 : 60000;
 const LOGIN_LIMIT = isProd ? 5 : 100;
 const LOGIN_TTL = 60000;
 
@@ -150,6 +150,7 @@ export class AuthController {
   async logout(@Request() req: any, @Res({ passthrough: true }) res: Response) {
     await this.authService.logout(req.user.sub, req.user.sessionId);
     res.clearCookie('__Host-matrimony_session', { path: '/' });
+    res.clearCookie('matrimony_session', { path: '/' });
     res.clearCookie('refreshToken', { path: '/' });
     return { message: 'Logged out successfully' };
   }
@@ -179,19 +180,34 @@ export class AuthController {
   }
 
   private setAuthCookies(res: Response, accessToken: string, refreshToken: string) {
-    res.cookie('__Host-matrimony_session', accessToken, {
+    const isProd = process.env.NODE_ENV === 'production';
+    const sessionMaxAge = 7 * 24 * 60 * 60 * 1000; // 7 days
+    const refreshMaxAge = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+    if (isProd) {
+      res.cookie('__Host-matrimony_session', accessToken, {
+        httpOnly: true,
+        secure: true, // Browser specification strictly requires Secure=true for __Host- prefix
+        sameSite: 'lax',
+        path: '/',
+        maxAge: sessionMaxAge,
+      });
+    }
+
+    res.cookie('matrimony_session', accessToken, {
       httpOnly: true,
-      secure: true, // Browser specification strictly requires Secure=true for __Host- prefix
+      secure: isProd,
       sameSite: 'lax',
-      path: '/'
+      path: '/',
+      maxAge: sessionMaxAge,
     });
 
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: isProd,
       sameSite: 'lax',
       path: '/',
-      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+      maxAge: refreshMaxAge,
     });
   }
 }

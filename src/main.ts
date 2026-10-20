@@ -7,6 +7,9 @@ import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  const expressApp = app.getHttpAdapter().getInstance();
+  expressApp.set('trust proxy', true);
+
   app.setGlobalPrefix(process.env.API_PREFIX || 'api/v1');
   app.use(
     helmet({
@@ -24,12 +27,30 @@ async function bootstrap() {
   app.use(cookieParser());
   const allowedOrigins = process.env.CORS_ORIGINS;
   app.enableCors({
-    origin: allowedOrigins
-      ? allowedOrigins === '*'
-        ? true
-        : allowedOrigins.split(',').map((o) => o.trim())
-      : ['http://localhost:3001', 'http://localhost:3000'],
+    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+      // Allow requests with no origin (mobile apps, server-to-server, curl)
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins === '*' || allowedOrigins?.split(',').map((o) => o.trim()).includes(origin)) {
+        return callback(null, true);
+      }
+
+      // In development or local testing, allow localhost/127.0.0.1 and local subnet origins
+      if (
+        process.env.NODE_ENV !== 'production' ||
+        origin.startsWith('http://localhost:') ||
+        origin.startsWith('http://127.0.0.1:') ||
+        origin.startsWith('http://10.') ||
+        origin.startsWith('http://192.168.')
+      ) {
+        return callback(null, true);
+      }
+
+      return callback(null, false);
+    },
     credentials: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Accept', 'Authorization', 'X-Requested-With'],
   });
   app.useGlobalPipes(new ValidationPipe({
     whitelist: true,

@@ -108,6 +108,7 @@ export class R2StorageService implements StorageService {
   constructor(
     private readonly configService: ConfigService,
     private readonly imageProcessor: ImageProcessorService,
+    @Optional() private readonly localStorageService?: LocalStorageService,
     @Optional() customClient?: S3Client,
   ) {
     if (customClient) {
@@ -160,6 +161,8 @@ export class R2StorageService implements StorageService {
           secretAccessKey: secretAccessKey!,
         },
         forcePathStyle: true,
+        requestChecksumCalculation: 'WHEN_REQUIRED' as any,
+        responseChecksumValidation: 'WHEN_REQUIRED' as any,
       });
     }
 
@@ -199,16 +202,26 @@ export class R2StorageService implements StorageService {
       ContentType: 'image/webp',
     });
 
-    await this.s3Client!.send(command);
+    try {
+      await this.s3Client!.send(command);
 
-    const baseUrl = this.publicBaseUrl.replace(/\/+$/, '');
-    const url = `${baseUrl}/${objectKey}`;
+      const baseUrl = this.publicBaseUrl.replace(/\/+$/, '');
+      const url = `${baseUrl}/${objectKey}`;
 
-    return {
-      url,
-      objectKey,
-      storageProvider: 'r2',
-    };
+      return {
+        url,
+        objectKey,
+        storageProvider: 'r2',
+      };
+    } catch (r2Err) {
+      this.logger.warn(
+        `R2 upload failed, falling back to local storage: ${(r2Err as any)?.message || r2Err}`,
+      );
+      if (this.localStorageService) {
+        return this.localStorageService.uploadFile(file, userId);
+      }
+      throw r2Err;
+    }
   }
 
   async deleteFile(target: StorageDeleteTarget): Promise<void> {

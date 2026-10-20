@@ -33,16 +33,16 @@ export class AuthService {
     private configService: ConfigService,
   ) {}
 
-  async getTokens(userId: string, email: string | null | undefined, role: string, sessionId?: string) {
-    const payload = { sub: userId, email: email || '', role, ...(sessionId ? { sessionId } : {}) };
+  async getTokens(userId: string, email: string | null | undefined, role: string, sessionId?: string, status?: string) {
+    const payload = { sub: userId, email: email || '', role, ...(status ? { status } : {}), ...(sessionId ? { sessionId } : {}) };
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, {
         secret: this.configService.get<string>('JWT_ACCESS_SECRET'),
-        expiresIn: (this.configService.get<string>('JWT_ACCESS_EXPIRES_IN') || '15m') as any,
+        expiresIn: (this.configService.get<string>('JWT_ACCESS_EXPIRES_IN') || '7d') as any,
       }),
       this.jwtService.signAsync(payload, {
         secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
-        expiresIn: '7d',
+        expiresIn: (this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '30d') as any,
       }),
     ]);
 
@@ -143,7 +143,7 @@ export class AuthService {
 
         // Resuming existing draft
         const sessionId = crypto.randomUUID();
-        const tokens = await this.getTokens(existingUser.id, existingUser.email, existingUser.role, sessionId);
+        const tokens = await this.getTokens(existingUser.id, existingUser.email, existingUser.role, sessionId, existingUser.status);
         await this.updateRefreshToken(existingUser.id, tokens.refreshToken, sessionId, deviceInfo);
 
         let profile = existingUser.profile;
@@ -238,7 +238,7 @@ export class AuthService {
     });
 
     const sessionId = crypto.randomUUID();
-    const tokens = await this.getTokens(user.id, user.email, user.role, sessionId);
+    const tokens = await this.getTokens(user.id, user.email, user.role, sessionId, user.status);
     await this.updateRefreshToken(user.id, tokens.refreshToken, sessionId, deviceInfo);
 
     return {
@@ -296,7 +296,7 @@ export class AuthService {
     });
 
     const sessionId = crypto.randomUUID();
-    const tokens = await this.getTokens(user.id, user.email, user.role, sessionId);
+    const tokens = await this.getTokens(user.id, user.email, user.role, sessionId, user.status);
     await this.updateRefreshToken(user.id, tokens.refreshToken, sessionId, deviceInfo);
 
     const { passwordHash: _, hashedRefreshToken: __, ...result } = user;
@@ -497,7 +497,7 @@ export class AuthService {
     }
 
     const sessionId = crypto.randomUUID();
-    const tokens = await this.getTokens(user.id, user.email || '', user.role, sessionId);
+    const tokens = await this.getTokens(user.id, user.email || '', user.role, sessionId, user.status);
     await this.updateRefreshToken(user.id, tokens.refreshToken, sessionId, deviceInfo);
 
     return {
@@ -601,7 +601,7 @@ export class AuthService {
     }
 
     const sessionId = crypto.randomUUID();
-    const tokens = await this.getTokens(user.id, user.email || '', user.role, sessionId);
+    const tokens = await this.getTokens(user.id, user.email || '', user.role, sessionId, user.status);
     await this.updateRefreshToken(user.id, tokens.refreshToken, sessionId, deviceInfo);
 
     const { passwordHash: _, hashedRefreshToken: __, ...result } = user;
@@ -785,7 +785,7 @@ export class AuthService {
       throw new UnauthorizedException('Access Denied');
     }
 
-    const tokens = await this.getTokens(user.id, user.email, user.role, sessionId);
+    const tokens = await this.getTokens(user.id, user.email, user.role, sessionId, user.status);
     await this.updateRefreshToken(user.id, tokens.refreshToken, sessionId);
 
     return tokens;

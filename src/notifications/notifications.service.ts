@@ -40,6 +40,16 @@ export class NotificationsService {
     });
 
     if (existing) {
+      // Clean up any extra duplicates from this sender so strictly only 1 notification exists
+      await this.prisma.notification.deleteMany({
+        where: {
+          userId: recipientId,
+          type: 'NEW_MESSAGE',
+          referenceId: senderId,
+          id: { not: existing.id },
+        },
+      });
+
       return this.prisma.notification.update({
         where: { id: existing.id },
         data: {
@@ -81,7 +91,7 @@ export class NotificationsService {
       orderBy: { createdAt: 'desc' },
     });
 
-    // Deduplicate NEW_MESSAGE notifications by sender so each user appears only once (latest notification)
+    // Deduplicate NEW_MESSAGE notifications by sender so each user appears only once (latest notification only)
     const seenSenders = new Set<string>();
     const distinctList = [];
 
@@ -95,7 +105,68 @@ export class NotificationsService {
       distinctList.push(notif);
     }
 
-    return distinctList;
+    // Enrich with sender profile details (name, photo, city)
+    const userIdsToFetch = Array.from(
+      new Set(distinctList.map((n) => n.referenceId).filter((id): id is string => Boolean(id)))
+    );
+
+    const senders = userIdsToFetch.length > 0
+      ? await this.prisma.user.findMany({
+          where: { id: { in: userIdsToFetch } },
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            profile: {
+              select: {
+                city: true,
+                occupation: true,
+                firstName: true,
+                lastName: true,
+              },
+            },
+            photos: {
+              select: {
+                url: true,
+                isPrimary: true,
+              },
+            },
+          },
+        })
+      : [];
+
+    const senderMap = new Map(
+      senders.map((s) => {
+        const photo = s.photos.find((p) => p.isPrimary)?.url || s.photos[0]?.url || null;
+        const name =
+          `${s.profile?.firstName || s.firstName || ''} ${s.profile?.lastName || s.lastName || ''}`.trim() ||
+          'Member';
+        return [
+          s.id,
+          {
+            id: s.id,
+            name,
+            avatarUrl: photo,
+            city: s.profile?.city || null,
+            occupation: s.profile?.occupation || null,
+          },
+        ];
+      })
+    );
+
+    return distinctList.map((notif) => {
+      const sender = notif.referenceId ? senderMap.get(notif.referenceId) || null : null;
+      let content = notif.content;
+      // If legacy content was "You have a new message!", replace with sender name
+      if (content === 'You have a new message!' && sender) {
+        content = `${sender.name}: Sent you a message`;
+      }
+      return {
+        ...notif,
+        content,
+        sender,
+      };
+    });
   }
 
   async markAsRead(notificationId: string, userId: string) {
