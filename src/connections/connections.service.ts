@@ -354,7 +354,7 @@ export class ConnectionsService {
 
   async getConnections(
     userId: string,
-    type: 'sent' | 'received' | 'matches' | 'shortlisted' | 'shortlisted_by_me' | 'shortlisted_you',
+    type: 'sent' | 'received' | 'matches' | 'shortlisted' | 'shortlisted_by_me' | 'shortlisted_you' | 'declined',
   ) {
     const userSelect = {
       id: true,
@@ -395,6 +395,19 @@ export class ConnectionsService {
         connections = received.map((c: any) => ({
           ...c,
           partner: c.sender,
+        }));
+        break;
+      }
+
+      case 'declined': {
+        const declined = await this.prisma.connection.findMany({
+          where: { senderId: userId, status: 'REJECTED' },
+          include: { receiver: { select: userSelect } },
+          orderBy: { updatedAt: 'desc' },
+        });
+        connections = declined.map((c: any) => ({
+          ...c,
+          partner: c.receiver,
         }));
         break;
       }
@@ -471,6 +484,7 @@ export class ConnectionsService {
         const score = calculateCompatibility(currentUser, partner);
         if (partner.profile) {
           partner.profile.compatibility = score;
+          delete partner.profile.permanentAddress;
         }
         partner.compatibility = score;
         (conn as any).compatibility = score;

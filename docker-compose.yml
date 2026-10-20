@@ -32,7 +32,7 @@ services:
       API_PREFIX: api/v1
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/matrimony
       JWT_ACCESS_SECRET: dev-secret-key-12345678901234567890
-      JWT_ACCESS_EXPIRES_IN: 15m
+      JWT_ACCESS_EXPIRES_IN: 7d
       CORS_ORIGINS: "*"
     depends_on:
       - postgres

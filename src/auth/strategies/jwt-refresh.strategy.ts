@@ -14,11 +14,14 @@ export class JwtRefreshStrategy extends PassportStrategy(Strategy, 'jwt-refresh'
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([
         (request: Request) => {
-          let data = request?.cookies?.['refreshToken'];
-          if (!data) {
-            return null;
+          let data = request?.cookies?.['refreshToken'] || request?.body?.refreshToken;
+          if (!data && request?.headers?.authorization) {
+            const auth = request.headers.authorization;
+            if (auth.startsWith('Bearer ')) {
+              data = auth.substring(7).trim();
+            }
           }
-          return data;
+          return data || null;
         },
       ]),
       ignoreExpiration: false,
@@ -28,7 +31,10 @@ export class JwtRefreshStrategy extends PassportStrategy(Strategy, 'jwt-refresh'
   }
 
   async validate(req: Request, payload: any) {
-    const refreshToken = req.cookies?.['refreshToken'];
+    const refreshToken =
+      req.cookies?.['refreshToken'] ||
+      req.body?.refreshToken ||
+      (req.headers?.authorization?.startsWith('Bearer ') ? req.headers.authorization.substring(7).trim() : null);
     if (!refreshToken) {
       throw new UnauthorizedException();
     }

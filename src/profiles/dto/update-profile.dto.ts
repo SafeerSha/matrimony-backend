@@ -1,5 +1,6 @@
 import {
   IsArray,
+  IsBoolean,
   IsDateString,
   IsEmail,
   IsNumber,
@@ -152,4 +153,42 @@ export class UpdateProfileDto {
   @IsString()
   @MaxLength(1500)
   lookingFor?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  nationality?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  fatherName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  permanentAddress?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  fatherAlive?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  motherAlive?: boolean;
+
+  @IsOptional()
+  brothersCount?: number;
+
+  @IsOptional()
+  brothersMarried?: number;
+
+  @IsOptional()
+  sistersCount?: number;
+
+  @IsOptional()
+  sistersMarried?: number;
+
+  @IsOptional()
+  familyDetails?: any;
 }

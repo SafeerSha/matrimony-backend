@@ -57,7 +57,70 @@ export class CompleteOnboardingDto {
   @IsOptional()
   @IsString()
   @MaxLength(100)
+  state?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
   country?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  nationality?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  fatherName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  religion?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  caste?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  annualIncome?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  height?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  permanentAddress?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  fatherAlive?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  motherAlive?: boolean;
+
+  @IsOptional()
+  brothersCount?: number;
+
+  @IsOptional()
+  brothersMarried?: number;
+
+  @IsOptional()
+  sistersCount?: number;
+
+  @IsOptional()
+  sistersMarried?: number;
+
+  @IsOptional()
+  familyDetails?: any;
 
   @IsOptional()
   @IsBoolean()

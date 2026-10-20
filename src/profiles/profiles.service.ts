@@ -156,6 +156,16 @@ export class ProfilesService {
       category: user.profile?.category || 'Marriage',
       bio: user.profile?.bio || null,
       family: user.profile?.family || null,
+      fatherName: user.profile?.fatherName || null,
+      nationality: user.profile?.nationality || 'Indian',
+      permanentAddress: user.profile?.permanentAddress || null,
+      fatherAlive: user.profile?.fatherAlive ?? true,
+      motherAlive: user.profile?.motherAlive ?? true,
+      brothersCount: user.profile?.brothersCount ?? 0,
+      brothersMarried: user.profile?.brothersMarried ?? 0,
+      sistersCount: user.profile?.sistersCount ?? 0,
+      sistersMarried: user.profile?.sistersMarried ?? 0,
+      familyDetails: user.profile?.familyDetails || null,
       lifestyle: user.profile?.lifestyle || [],
       interests: user.profile?.interests || [],
       lookingFor: user.profile?.lookingFor || null,
@@ -283,8 +293,21 @@ export class ProfilesService {
       }
     }
 
+    const sanitizedProfile: any = { ...profile };
+    // PRIVACY ENFORCEMENT: Permanent Address, phone number, and email must be hidden from public profile
+    if (!viewerId || viewerId !== profile.userId) {
+      delete sanitizedProfile.permanentAddress;
+      if (sanitizedProfile.user) {
+        sanitizedProfile.user = {
+          ...sanitizedProfile.user,
+          phone: undefined,
+          email: undefined,
+        };
+      }
+    }
+
     return {
-      ...profile,
+      ...sanitizedProfile,
       age: calculatedAge,
       compatibility,
       isOnline,
@@ -312,6 +335,16 @@ export class ProfilesService {
       bio,
       about,
       family,
+      fatherName,
+      nationality,
+      permanentAddress,
+      fatherAlive,
+      motherAlive,
+      brothersCount,
+      brothersMarried,
+      sistersCount,
+      sistersMarried,
+      familyDetails,
       lookingFor,
       city,
       state,
@@ -391,6 +424,16 @@ export class ProfilesService {
       ...(annualIncome !== undefined ? { annualIncome: sanitizeText(annualIncome, 100) ?? null } : {}),
       ...(effectiveBio !== undefined ? { bio: effectiveBio ?? null } : {}),
       ...(family !== undefined ? { family: sanitizeText(family, 1500) ?? null } : {}),
+      ...(fatherName !== undefined ? { fatherName: sanitizeText(fatherName, 100) ?? null } : {}),
+      ...(nationality !== undefined ? { nationality: sanitizeText(nationality, 100) ?? null } : {}),
+      ...(permanentAddress !== undefined ? { permanentAddress: sanitizeText(permanentAddress, 500) ?? null } : {}),
+      ...(fatherAlive !== undefined ? { fatherAlive } : {}),
+      ...(motherAlive !== undefined ? { motherAlive } : {}),
+      ...(brothersCount !== undefined ? { brothersCount: Number(brothersCount) } : {}),
+      ...(brothersMarried !== undefined ? { brothersMarried: Number(brothersMarried) } : {}),
+      ...(sistersCount !== undefined ? { sistersCount: Number(sistersCount) } : {}),
+      ...(sistersMarried !== undefined ? { sistersMarried: Number(sistersMarried) } : {}),
+      ...(familyDetails !== undefined ? { familyDetails } : {}),
       ...(lookingFor !== undefined ? { lookingFor: sanitizeText(lookingFor, 1500) ?? null } : {}),
       ...(city !== undefined ? { city: sanitizeText(city, 100) ?? null } : {}),
       ...(state !== undefined ? { state: sanitizeText(state, 100) ?? null } : {}),

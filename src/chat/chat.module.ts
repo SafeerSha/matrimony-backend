@@ -16,7 +16,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
           configService.get<string>('JWT_SECRET') ||
           'supersecret',
         signOptions: {
-          expiresIn: (configService.get<string>('JWT_ACCESS_EXPIRES_IN') || '15m') as any,
+          expiresIn: (configService.get<string>('JWT_ACCESS_EXPIRES_IN') || '7d') as any,
         },
       }),
       inject: [ConfigService],

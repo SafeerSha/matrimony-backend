@@ -48,12 +48,18 @@ export class OnboardingService {
     const effectiveGender = dto.gender || user.profile?.gender;
     const effectiveDob = dto.dateOfBirth ? new Date(dto.dateOfBirth) : user.profile?.dateOfBirth;
     const effectiveEducation = dto.education || user.profile?.education;
+    const effectiveAddress = (dto.permanentAddress || user.profile?.permanentAddress || '').trim();
+    const effectiveEmail = normalizedEmail || user.email;
+    const effectivePhone = user.phone;
     const photoCount = user.photos ? user.photos.length : 0;
 
     const missingFields: string[] = [];
     if (!effectiveGender) missingFields.push('gender');
     if (!effectiveDob) missingFields.push('dateOfBirth');
     if (!effectiveEducation) missingFields.push('education');
+    if (!effectiveAddress) missingFields.push('permanent address');
+    if (!effectiveEmail) missingFields.push('email address');
+    if (!effectivePhone) missingFields.push('cell number');
     if (photoCount === 0 && !dto.skipPhotoCheck) {
       missingFields.push('at least one profile photo');
     }
@@ -82,6 +88,8 @@ export class OnboardingService {
       const sanitizedEducation = sanitizeText(dto.education, 255);
       const sanitizedOccupation = sanitizeText(dto.occupation || dto.profession, 255);
       const sanitizedEmploymentStatus = sanitizeText(dto.employmentStatus, 100);
+      const sanitizedAddress = sanitizeText(dto.permanentAddress, 500);
+      const sanitizedFatherName = sanitizeText(dto.fatherName, 100);
 
       const profileUpdateData: any = {
         onboardingStep: 5,
@@ -93,7 +101,22 @@ export class OnboardingService {
         ...(dto.bio ? { bio: sanitizeText(dto.bio) } : {}),
         ...(dto.maritalStatus ? { maritalStatus: dto.maritalStatus } : {}),
         ...(dto.city ? { city: sanitizeText(dto.city, 100) } : {}),
+        ...(dto.state ? { state: sanitizeText(dto.state, 100) } : {}),
         ...(dto.country ? { country: sanitizeText(dto.country, 100) } : {}),
+        ...(dto.nationality ? { nationality: sanitizeText(dto.nationality, 100) } : {}),
+        ...(sanitizedFatherName ? { fatherName: sanitizedFatherName } : {}),
+        ...(dto.religion ? { religion: sanitizeText(dto.religion, 100) } : {}),
+        ...(dto.caste ? { caste: sanitizeText(dto.caste, 100) } : {}),
+        ...(dto.height ? { height: sanitizeText(dto.height, 50) } : {}),
+        ...(dto.annualIncome ? { annualIncome: sanitizeText(dto.annualIncome, 100) } : {}),
+        ...(sanitizedAddress ? { permanentAddress: sanitizedAddress } : {}),
+        ...(dto.fatherAlive !== undefined ? { fatherAlive: dto.fatherAlive } : {}),
+        ...(dto.motherAlive !== undefined ? { motherAlive: dto.motherAlive } : {}),
+        ...(dto.brothersCount !== undefined ? { brothersCount: Number(dto.brothersCount) } : {}),
+        ...(dto.brothersMarried !== undefined ? { brothersMarried: Number(dto.brothersMarried) } : {}),
+        ...(dto.sistersCount !== undefined ? { sistersCount: Number(dto.sistersCount) } : {}),
+        ...(dto.sistersMarried !== undefined ? { sistersMarried: Number(dto.sistersMarried) } : {}),
+        ...(dto.familyDetails !== undefined ? { familyDetails: dto.familyDetails } : {}),
       };
 
       const updatedProfile = await tx.profile.upsert({

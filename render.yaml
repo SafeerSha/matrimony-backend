@@ -20,7 +20,7 @@ services:
       - key: JWT_ACCESS_SECRET
         generateValue: true
       - key: JWT_ACCESS_EXPIRES_IN
-        value: 15m
+        value: 7d
       - key: CORS_ORIGINS
         value: "*"
       - key: LOG_LEVEL
