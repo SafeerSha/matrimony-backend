@@ -108,7 +108,7 @@ export class OnboardingService {
         ...(dto.religion ? { religion: sanitizeText(dto.religion, 100) } : {}),
         ...(dto.caste ? { caste: sanitizeText(dto.caste, 100) } : {}),
         ...(dto.height ? { height: sanitizeText(dto.height, 50) } : {}),
-        ...(dto.annualIncome ? { annualIncome: sanitizeText(dto.annualIncome, 100) } : {}),
+        ...(dto.annualIncome || dto.income ? { annualIncome: sanitizeText(dto.annualIncome || dto.income, 100) } : {}),
         ...(sanitizedAddress ? { permanentAddress: sanitizedAddress } : {}),
         ...(dto.fatherAlive !== undefined ? { fatherAlive: dto.fatherAlive } : {}),
         ...(dto.motherAlive !== undefined ? { motherAlive: dto.motherAlive } : {}),

@@ -3,7 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpdatePreferencesDto, transformToStringOrCsv } from './dto/update-preferences.dto';
 import { sanitizeStringArray, sanitizeText } from '../common/utils/sanitize.util';
-import { calculateCompatibility } from '../common/utils/compatibility.util';
+import { calculateCompatibility, calculateCompatibilityWithHighlights } from '../common/utils/compatibility.util';
 
 export function calculateAge(dob: Date | string | null | undefined): number | null {
   if (!dob) return null;
@@ -201,6 +201,7 @@ export class ProfilesService {
               status: true,
               lastActiveAt: true,
               isPhoneVerified: true,
+              preference: true,
               photos: {
                 where: { isVerified: true },
                 orderBy: [
@@ -232,13 +233,19 @@ export class ProfilesService {
       ? Date.now() - lastActive.getTime() <= 5 * 60 * 1000
       : false;
 
-    const compatibility = calculateCompatibility(viewer, profile);
+    const compatibilityResult = calculateCompatibilityWithHighlights(viewer, profile);
+    const compatibility = compatibilityResult.score;
+    const compatibilityHighlights = compatibilityResult.highlights;
+    const formattedPreferences = formatPreferencesObject(profile.preferences, (profile.user as any)?.preference);
 
     let connectionStatus: 'SENT' | 'RECEIVED' | 'MATCHED' | 'SHORTLISTED' | 'REJECTED' | null = null;
     let isMatched = false;
     let isInterestSent = false;
     let isInterestReceived = false;
     let isShortlisted = false;
+    let isDeclined = false;
+    let isDeclinedByThem = false;
+    let isDeclinedByMe = false;
 
     if (viewerId && profile.userId && viewerId !== profile.userId) {
       const connection = await this.prisma.connection.findFirst({
@@ -277,6 +284,8 @@ export class ProfilesService {
             isShortlisted = true;
           } else if (connection.status === 'REJECTED') {
             connectionStatus = 'REJECTED';
+            isDeclined = true;
+            isDeclinedByThem = true;
           }
         } else {
           if (connection.status === 'PENDING') {
@@ -284,6 +293,8 @@ export class ProfilesService {
             isInterestReceived = true;
           } else if (connection.status === 'REJECTED') {
             connectionStatus = 'REJECTED';
+            isDeclined = true;
+            isDeclinedByMe = true;
           }
         }
       } else if (hasMessages) {
@@ -310,6 +321,8 @@ export class ProfilesService {
       ...sanitizedProfile,
       age: calculatedAge,
       compatibility,
+      compatibilityHighlights,
+      preferences: formattedPreferences,
       isOnline,
       lastActiveAt: lastActive ? lastActive.toISOString() : null,
       photos: profile.user?.photos || [],
@@ -318,6 +331,9 @@ export class ProfilesService {
       isInterestSent,
       isInterestReceived,
       isShortlisted,
+      isDeclined,
+      isDeclinedByThem,
+      isDeclinedByMe,
     };
   }
 
@@ -332,6 +348,7 @@ export class ProfilesService {
       profession,
       employmentStatus,
       annualIncome,
+      income,
       bio,
       about,
       family,
@@ -421,7 +438,7 @@ export class ProfilesService {
       ...(education !== undefined ? { education: sanitizeText(education, 255) ?? null } : {}),
       ...(occupation !== undefined || profession !== undefined ? { occupation: effectiveOccupation ?? null } : {}),
       ...(employmentStatus !== undefined ? { employmentStatus: sanitizeText(employmentStatus, 100) ?? null } : {}),
-      ...(annualIncome !== undefined ? { annualIncome: sanitizeText(annualIncome, 100) ?? null } : {}),
+      ...(annualIncome !== undefined || income !== undefined ? { annualIncome: sanitizeText(annualIncome ?? income, 100) ?? null } : {}),
       ...(effectiveBio !== undefined ? { bio: effectiveBio ?? null } : {}),
       ...(family !== undefined ? { family: sanitizeText(family, 1500) ?? null } : {}),
       ...(fatherName !== undefined ? { fatherName: sanitizeText(fatherName, 100) ?? null } : {}),
