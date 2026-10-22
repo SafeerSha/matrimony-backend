@@ -138,10 +138,19 @@ export class ChatService {
 
         const compatibility = calculateCompatibility(currentUser, partner);
 
+        const partnerName =
+          `${partner.firstName || partner.profile?.firstName || ''} ${partner.lastName || partner.profile?.lastName || ''}`.trim() ||
+          partner.name ||
+          partner.profile?.name ||
+          'Member';
+
+        const partnerPhoto = formattedPhotos[0]?.url || (partner.profile as any)?.image || null;
+
         return {
           id: partner.id,
           connectionId: connection.id,
           participantId: partner.id,
+          name: partnerName,
           online: isOnline,
           isOnline,
           lastActiveAt: (partner as any).lastActiveAt || null,
@@ -149,10 +158,12 @@ export class ChatService {
           participant: {
             id: partner.id,
             userId: partner.id,
+            name: partnerName,
             firstName: partner.firstName || partner.profile?.firstName || '',
             lastName: partner.lastName || partner.profile?.lastName || '',
             photos: formattedPhotos,
-            avatarUrl: formattedPhotos[0]?.url || null,
+            avatarUrl: partnerPhoto,
+            image: partnerPhoto,
             city: partner.profile?.city || null,
             occupation: partner.profile?.occupation || null,
             isVerified,
