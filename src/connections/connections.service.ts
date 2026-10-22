@@ -120,7 +120,11 @@ export class ConnectionsService {
         throw new BadRequestException('Interest already sent and pending');
       }
 
-      // If existing connection was SHORTLISTED or REJECTED, promote it to PENDING interest!
+      if (existing.status === 'REJECTED') {
+        throw new BadRequestException('This interest request was declined');
+      }
+
+      // If existing connection was SHORTLISTED, promote it to PENDING interest!
       const updated = await this.prisma.connection.update({
         where: { id: existing.id },
         data: {
@@ -292,6 +296,10 @@ export class ConnectionsService {
     });
 
     if (existing) {
+      if (existing.status === 'REJECTED') {
+        throw new BadRequestException('Cannot favorite a declined profile');
+      }
+
       // If already connected/accepted or interest pending, keep that primary connection status!
       if (existing.status === 'ACCEPTED' || existing.status === 'PENDING') {
         return existing;

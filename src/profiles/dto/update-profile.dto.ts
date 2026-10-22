@@ -108,6 +108,11 @@ export class UpdateProfileDto {
   annualIncome?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  income?: string;
+
+  @IsOptional()
   @Transform(({ value }) => (value !== undefined && value !== null ? String(value).trim() : undefined))
   @IsString()
   @MaxLength(50)

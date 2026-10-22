@@ -91,6 +91,11 @@ export class CompleteOnboardingDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(100)
+  income?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(50)
   height?: string;
 

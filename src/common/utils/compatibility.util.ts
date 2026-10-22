@@ -137,24 +137,41 @@ export function extractNormalizedPreferences(user: any): NormalizedPreferences {
  * Calculates a personalized matrimonial compatibility score (0 - 100%)
  * between the viewing user and candidate profile.
  */
-export function calculateCompatibility(viewer: any, candidate: any): number {
+export interface CompatibilityResult {
+  score: number;
+  highlights: Array<{
+    title: string;
+    value: string;
+    description: string;
+  }>;
+}
+
+export function calculateCompatibilityWithHighlights(viewer: any, candidate: any): CompatibilityResult {
   if (!viewer || !candidate) {
-    return 88; // Sensible default when unauthenticated or incomplete
+    return {
+      score: 88,
+      highlights: [
+        {
+          title: 'Verified Member',
+          value: 'Identity Verified',
+          description: 'Profile identity verified via phone verification.',
+        },
+      ],
+    };
   }
 
   // Same user
   if (viewer.id && candidate.id && viewer.id === candidate.id) {
-    return 100;
+    return { score: 100, highlights: [] };
   }
 
   const prefs = extractNormalizedPreferences(viewer);
   const candProf = candidate.profile || candidate;
+  const highlights: Array<{ title: string; value: string; description: string }> = [];
 
   let totalScore = 0;
 
-  // -------------------------------------------------------------
   // 1. AGE COMPATIBILITY (15 points max)
-  // -------------------------------------------------------------
   const candidateAge =
     calculateAge(candProf.dateOfBirth || candidate.dateOfBirth) ||
     candProf.age ||
@@ -166,6 +183,11 @@ export function calculateCompatibility(viewer: any, candidate: any): number {
     const max = prefs.maxAge ?? 60;
     if (candidateAge >= min && candidateAge <= max) {
       totalScore += 15;
+      highlights.push({
+        title: 'Age Alignment',
+        value: `Age ${candidateAge} years`,
+        description: `Falls within your preferred ${min}–${max} age window.`,
+      });
     } else if (candidateAge >= min - 2 && candidateAge <= max + 2) {
       totalScore += 10;
     } else if (candidateAge >= min - 4 && candidateAge <= max + 4) {
@@ -174,12 +196,10 @@ export function calculateCompatibility(viewer: any, candidate: any): number {
       totalScore += 2;
     }
   } else {
-    totalScore += 12; // Neutral baseline when age preference is not restricted
+    totalScore += 12;
   }
 
-  // -------------------------------------------------------------
   // 2. LOCATION / GEOGRAPHY ALIGNMENT (15 points max)
-  // -------------------------------------------------------------
   const candCity = (candProf.city || candidate.city || '').toLowerCase();
   const candState = (candProf.state || candidate.state || candProf.country || candidate.country || '').toLowerCase();
 
@@ -193,13 +213,18 @@ export function calculateCompatibility(viewer: any, candidate: any): number {
 
     if (isDirectMatch) {
       totalScore += 15;
+      highlights.push({
+        title: 'Preferred Location',
+        value: candProf.city ? `${candProf.city}${candProf.state ? `, ${candProf.state}` : ''}` : candProf.state || 'Local Region',
+        description: 'Matches your preferred location criteria.',
+      });
     } else if (
       candState.includes('kerala') ||
       candState.includes('india') ||
       candCity.includes('kochi') ||
       candCity.includes('trivandrum')
     ) {
-      totalScore += 10; // Same major region
+      totalScore += 10;
     } else {
       totalScore += 6;
     }
@@ -207,9 +232,7 @@ export function calculateCompatibility(viewer: any, candidate: any): number {
     totalScore += 12;
   }
 
-  // -------------------------------------------------------------
   // 3. RELIGION & COMMUNITY (15 points max)
-  // -------------------------------------------------------------
   const candReligion = (candProf.religion || candidate.religion || '').toLowerCase();
   const candCaste = (candProf.caste || candidate.caste || '').toLowerCase();
 
@@ -221,8 +244,18 @@ export function calculateCompatibility(viewer: any, candidate: any): number {
     if (isReligionMatch) {
       if (prefs.caste && candCaste && candCaste.includes(prefs.caste)) {
         totalScore += 15;
+        highlights.push({
+          title: 'Community Match',
+          value: candProf.caste ? `${candProf.religion || ''} - ${candProf.caste}` : candProf.religion || 'Community',
+          description: 'Matches your religious and community preferences.',
+        });
       } else {
         totalScore += 13;
+        highlights.push({
+          title: 'Religious Alignment',
+          value: candProf.religion || 'Community',
+          description: 'Matches your preferred religious background.',
+        });
       }
     } else {
       totalScore += 3;
@@ -231,9 +264,7 @@ export function calculateCompatibility(viewer: any, candidate: any): number {
     totalScore += 12;
   }
 
-  // -------------------------------------------------------------
   // 4. EDUCATION LEVEL (15 points max)
-  // -------------------------------------------------------------
   const candEducation = (candProf.education || candidate.education || '').toLowerCase();
 
   if (prefs.education.length > 0) {
@@ -243,6 +274,11 @@ export function calculateCompatibility(viewer: any, candidate: any): number {
 
     if (isEduMatch) {
       totalScore += 15;
+      highlights.push({
+        title: 'Educational Alignment',
+        value: candProf.education || 'Graduate',
+        description: 'Meets your preferred educational background criteria.',
+      });
     } else if (
       candEducation.includes('bachelor') ||
       candEducation.includes('master') ||
@@ -251,7 +287,7 @@ export function calculateCompatibility(viewer: any, candidate: any): number {
       candEducation.includes('degree') ||
       candEducation.includes('graduate')
     ) {
-      totalScore += 10; // Educated professional baseline
+      totalScore += 10;
     } else {
       totalScore += 6;
     }
@@ -259,9 +295,7 @@ export function calculateCompatibility(viewer: any, candidate: any): number {
     totalScore += 12;
   }
 
-  // -------------------------------------------------------------
   // 5. PROFESSION & CAREER (15 points max)
-  // -------------------------------------------------------------
   const candOcc = (candProf.occupation || candProf.profession || candidate.occupation || '').toLowerCase();
   const candEmp = (candProf.employmentStatus || candidate.employmentStatus || '').toLowerCase();
 
@@ -272,6 +306,11 @@ export function calculateCompatibility(viewer: any, candidate: any): number {
 
     if (isOccMatch) {
       totalScore += 15;
+      highlights.push({
+        title: 'Career Alignment',
+        value: candProf.occupation || candProf.profession || 'Professional',
+        description: 'Matches your partner career preferences.',
+      });
     } else if (
       candEmp.includes('private') ||
       candEmp.includes('government') ||
@@ -287,9 +326,7 @@ export function calculateCompatibility(viewer: any, candidate: any): number {
     totalScore += 12;
   }
 
-  // -------------------------------------------------------------
   // 6. MARITAL STATUS (10 points max)
-  // -------------------------------------------------------------
   const candMarital = (candProf.maritalStatus || candidate.maritalStatus || '').toLowerCase();
 
   if (prefs.maritalStatuses.length > 0) {
@@ -303,12 +340,10 @@ export function calculateCompatibility(viewer: any, candidate: any): number {
       totalScore += 3;
     }
   } else {
-    totalScore += 10; // Default when open to all marital statuses
+    totalScore += 10;
   }
 
-  // -------------------------------------------------------------
   // 7. DIET, LIFESTYLE & SHARED INTERESTS (15 points max)
-  // -------------------------------------------------------------
   const candDiet = (candProf.diet || candidate.diet || '').toLowerCase();
   let dietScore = 7;
 
@@ -316,7 +351,16 @@ export function calculateCompatibility(viewer: any, candidate: any): number {
     const isDietMatch = prefs.diet.some(
       (d) => candDiet.includes(d) || d.includes(candDiet)
     );
-    dietScore = isDietMatch ? 7 : 3;
+    if (isDietMatch) {
+      dietScore = 7;
+      highlights.push({
+        title: 'Dietary Compatibility',
+        value: candProf.diet || 'Dietary Habit',
+        description: 'Compatible with your dietary lifestyle.',
+      });
+    } else {
+      dietScore = 3;
+    }
   }
 
   // Mutual interests overlap
@@ -330,15 +374,54 @@ export function calculateCompatibility(viewer: any, candidate: any): number {
   let interestScore = 5;
   if (viewerInterests.length > 0 && candInterests.length > 0) {
     const shared = candInterests.filter((i: string) => viewerInterests.includes(i));
-    if (shared.length >= 3) interestScore = 8;
-    else if (shared.length >= 1) interestScore = 6;
-    else interestScore = 4;
+    if (shared.length >= 3) {
+      interestScore = 8;
+      highlights.push({
+        title: 'Shared Passions',
+        value: shared.slice(0, 2).map((s: string) => s.charAt(0).toUpperCase() + s.slice(1)).join(' & '),
+        description: 'Overlapping leisure interests make initial conversations effortless.',
+      });
+    } else if (shared.length >= 1) {
+      interestScore = 6;
+      highlights.push({
+        title: 'Shared Passions',
+        value: shared.slice(0, 2).map((s: string) => s.charAt(0).toUpperCase() + s.slice(1)).join(' & '),
+        description: 'Common hobbies provide great mutual conversation starters.',
+      });
+    } else {
+      interestScore = 4;
+    }
   } else {
     interestScore = 5;
   }
 
   totalScore += dietScore + interestScore;
+  const score = Math.min(98, Math.max(48, Math.round(totalScore)));
 
-  // Clamp realistically between 48% and 98%
-  return Math.min(98, Math.max(48, Math.round(totalScore)));
+  // Fallbacks if fewer than 2 highlights matched
+  if (highlights.length < 2) {
+    if (candProf.bio) {
+      highlights.push({
+        title: 'Authentic Background',
+        value: 'Detailed Profile',
+        description: 'Candidate has provided thoughtful details about their life and values.',
+      });
+    }
+    if (candProf.city || candProf.state) {
+      highlights.push({
+        title: 'Location Context',
+        value: [candProf.city, candProf.state].filter(Boolean).join(', '),
+        description: 'Regional roots and native background shared openly.',
+      });
+    }
+  }
+
+  return {
+    score,
+    highlights: highlights.slice(0, 4),
+  };
+}
+
+export function calculateCompatibility(viewer: any, candidate: any): number {
+  return calculateCompatibilityWithHighlights(viewer, candidate).score;
 }
