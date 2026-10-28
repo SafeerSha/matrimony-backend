@@ -99,7 +99,7 @@ export class OnboardingService {
         ...(sanitizedOccupation ? { occupation: sanitizedOccupation } : {}),
         ...(sanitizedEmploymentStatus ? { employmentStatus: sanitizedEmploymentStatus } : {}),
         ...(dto.bio ? { bio: sanitizeText(dto.bio) } : {}),
-        ...(dto.maritalStatus ? { maritalStatus: dto.maritalStatus } : {}),
+        ...(dto.maritalStatus ? { maritalStatus: sanitizeText(dto.maritalStatus, 50) } : {}),
         ...(dto.city ? { city: sanitizeText(dto.city, 100) } : {}),
         ...(dto.state ? { state: sanitizeText(dto.state, 100) } : {}),
         ...(dto.country ? { country: sanitizeText(dto.country, 100) } : {}),
