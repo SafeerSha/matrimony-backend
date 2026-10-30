@@ -19,6 +19,7 @@ model User {
   isEmailVerified    Boolean        @default(false)
   role               String         @default("USER") // 'USER', 'ADMIN', 'RM'
   status             String         @default("DRAFT") // 'DRAFT', 'PENDING_VERIFICATION', 'ACTIVE', 'SUSPENDED'
+  subscriptionTier   String         @default("BASIC") // 'BASIC', 'PAID'
   firstName          String?
   lastName           String?
   profileId          String?        @unique
@@ -35,9 +36,16 @@ model User {
   photos              Photo[]
   sentMessages        Message[]      @relation("SentMessages")
   receivedMessages    Message[]      @relation("ReceivedMessages")
+  subscriptionEvents  SubscriptionEvent[]
   notifications       Notification[]
   otpVerifications    OtpVerification[]
   devices             UserDevice[]
+
+  @@index([createdAt])
+  @@index([lastActiveAt])
+  @@index([subscriptionTier])
+  @@index([isBanned])
+  @@index([status])
 }
 
 model Profile {
@@ -195,6 +203,19 @@ model UserDevice {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([userId])
+}
+
+model SubscriptionEvent {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fromTier  String   // 'BASIC' | 'PAID'
+  toTier    String   // 'BASIC' | 'PAID'
+  source    String   // 'ADMIN' | 'PAYMENT'
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
   @@index([userId])
 }
 

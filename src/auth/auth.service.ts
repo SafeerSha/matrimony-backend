@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   ConflictException,
   UnauthorizedException,
   BadRequestException,
@@ -26,12 +27,38 @@ import { parseUserAgentAndHeaders, ParsedDeviceInfo } from '../common/utils/devi
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+  private readonly activityThrottleMap = new Map<string, number>();
+  private readonly ACTIVITY_THROTTLE_MS = 5 * 60 * 1000; // 5 minutes
+
   constructor(
     private usersService: UsersService,
     private prisma: PrismaService,
     private jwtService: JwtService,
     private configService: ConfigService,
   ) {}
+
+  /**
+   * Throttled non-blocking lastActiveAt recording in the auth/refresh path.
+   * Runs at most once per 5 minutes per user, isolated from request failure.
+   */
+  recordActivityThrottled(userId: string): void {
+    const now = Date.now();
+    const last = this.activityThrottleMap.get(userId);
+    if (last && now - last < this.ACTIVITY_THROTTLE_MS) {
+      return;
+    }
+    this.activityThrottleMap.set(userId, now);
+
+    this.prisma.user
+      .update({
+        where: { id: userId },
+        data: { lastActiveAt: new Date(now) },
+      })
+      .catch((err) => {
+        this.logger.warn(`Failed to update lastActiveAt for ${userId}: ${err?.message}`);
+      });
+  }
 
   async getTokens(userId: string, email: string | null | undefined, role: string, sessionId?: string, status?: string) {
     const payload = { sub: userId, email: email || '', role, ...(status ? { status } : {}), ...(sessionId ? { sessionId } : {}) };
@@ -787,6 +814,7 @@ export class AuthService {
 
     const tokens = await this.getTokens(user.id, user.email, user.role, sessionId, user.status);
     await this.updateRefreshToken(user.id, tokens.refreshToken, sessionId);
+    this.recordActivityThrottled(user.id);
 
     return tokens;
   }

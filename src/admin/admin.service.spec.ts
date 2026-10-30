@@ -1,7 +1,8 @@
+import { jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AdminService } from './admin.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { STORAGE_SERVICE, StorageService } from '../storage/storage.service';
+import { STORAGE_SERVICE, StorageService } from '../storage/storage.interface';
 import { NotFoundException } from '@nestjs/common';
 
 describe('AdminService', () => {
@@ -11,25 +12,29 @@ describe('AdminService', () => {
 
   const mockPrisma = {
     user: {
-      findMany: jest.fn(),
-      count: jest.fn(),
-      findUnique: jest.fn(),
-      update: jest.fn(),
+      findMany: jest.fn<any>(),
+      count: jest.fn<any>(),
+      findUnique: jest.fn<any>(),
+      update: jest.fn<any>(),
+    },
+    subscriptionEvent: {
+      create: jest.fn<any>(),
     },
     connection: {
-      count: jest.fn(),
+      count: jest.fn<any>(),
     },
     photo: {
-      count: jest.fn(),
-      findUnique: jest.fn(),
-      update: jest.fn(),
-      delete: jest.fn(),
+      count: jest.fn<any>(),
+      findUnique: jest.fn<any>(),
+      update: jest.fn<any>(),
+      delete: jest.fn<any>(),
     },
+    $transaction: jest.fn<any>(),
   };
 
   const mockStorageService = {
-    uploadFile: jest.fn(),
-    deleteFile: jest.fn(),
+    uploadFile: jest.fn<any>(),
+    deleteFile: jest.fn<any>(),
   };
 
   beforeEach(async () => {
@@ -67,16 +72,99 @@ describe('AdminService', () => {
 
   describe('banUser', () => {
     it('should ban a user successfully', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ id: '1' });
-      mockPrisma.user.update.mockResolvedValue({ id: '1', isBanned: true });
+      mockPrisma.user.update.mockResolvedValue({ id: '1', email: 'test@test.com', isBanned: true });
 
       const result = await service.banUser('1');
       expect(result.isBanned).toBe(true);
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+        where: { id: '1' },
+        data: { isBanned: true },
+        select: { id: true, email: true, isBanned: true },
+      });
     });
 
+    it('should throw NotFoundException if user not found (P2025)', async () => {
+      mockPrisma.user.update.mockRejectedValue({ code: 'P2025' });
+      await expect(service.banUser('1')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('unbanUser', () => {
+    it('should unban a user successfully', async () => {
+      mockPrisma.user.update.mockResolvedValue({ id: '1', email: 'test@test.com', isBanned: false });
+
+      const result = await service.unbanUser('1');
+      expect(result.isBanned).toBe(false);
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+        where: { id: '1' },
+        data: { isBanned: false },
+        select: { id: true, email: true, isBanned: true },
+      });
+    });
+
+    it('should throw NotFoundException if user not found (P2025)', async () => {
+      mockPrisma.user.update.mockRejectedValue({ code: 'P2025' });
+      await expect(service.unbanUser('1')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('updateSubscriptionTier', () => {
     it('should throw NotFoundException if user not found', async () => {
       mockPrisma.user.findUnique.mockResolvedValue(null);
-      await expect(service.banUser('1')).rejects.toThrow(NotFoundException);
+      await expect(service.updateSubscriptionTier('non-existent', 'PAID')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('should be idempotent and skip transaction if tier is unchanged', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({
+        id: '1',
+        email: 'test@test.com',
+        subscriptionTier: 'PAID',
+      });
+
+      const result = await service.updateSubscriptionTier('1', 'PAID');
+      expect(result.subscriptionTier).toBe('PAID');
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('should update tier and record SubscriptionEvent inside $transaction when tier changes', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({
+        id: '1',
+        email: 'test@test.com',
+        subscriptionTier: 'BASIC',
+      });
+
+      const txUserUpdate = jest.fn<any>().mockResolvedValue({
+        id: '1',
+        email: 'test@test.com',
+        subscriptionTier: 'PAID',
+      });
+      const txEventCreate = jest.fn<any>().mockResolvedValue({ id: 'evt-1' });
+
+      mockPrisma.$transaction.mockImplementation(async (callback: any) => {
+        return callback({
+          user: { update: txUserUpdate },
+          subscriptionEvent: { create: txEventCreate },
+        });
+      });
+
+      const result = await service.updateSubscriptionTier('1', 'PAID');
+      expect(result.subscriptionTier).toBe('PAID');
+      expect(mockPrisma.$transaction).toHaveBeenCalled();
+      expect(txUserUpdate).toHaveBeenCalledWith({
+        where: { id: '1' },
+        data: { subscriptionTier: 'PAID' },
+        select: { id: true, email: true, subscriptionTier: true },
+      });
+      expect(txEventCreate).toHaveBeenCalledWith({
+        data: {
+          userId: '1',
+          fromTier: 'BASIC',
+          toTier: 'PAID',
+          source: 'ADMIN',
+        },
+      });
     });
   });
 

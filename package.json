@@ -19,6 +19,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
+    "seed:admin": "node prisma/seed-admin.cjs",
     "db:wipe": "node prisma/wipe-db.js"
   },
   "dependencies": {

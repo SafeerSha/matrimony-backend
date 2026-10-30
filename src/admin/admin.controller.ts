@@ -1,9 +1,13 @@
-import { Controller, Get, Post, Param, UseGuards, Query, Body, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, UseGuards, Query, Body } from '@nestjs/common';
 import { AdminService } from './admin.service';
+import { AnalyticsService } from './analytics.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { AnalyticsQueryDto, AnalyticsTimeSeriesQueryDto } from './dto/analytics-query.dto';
+import { AdminUserQueryDto, UpdateTierBodyDto, VerifyPhotoBodyDto } from './dto/user-query.dto';
 
 @ApiTags('Admin')
 @ApiBearerAuth('JWT-auth')
@@ -11,16 +15,29 @@ import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('ADMIN')
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {}
+  constructor(
+    private readonly adminService: AdminService,
+    private readonly analyticsService: AnalyticsService,
+  ) {}
+
+  @Get('analytics/overview')
+  async getAnalyticsOverview(
+    @Query() query: AnalyticsQueryDto,
+    @CurrentUser() user: any,
+  ) {
+    return this.analyticsService.getOverview(query, user?.role || 'ADMIN');
+  }
+
+  @Get('analytics/timeseries')
+  async getAnalyticsTimeSeries(
+    @Query() query: AnalyticsTimeSeriesQueryDto,
+  ) {
+    return this.analyticsService.getTimeSeries(query);
+  }
 
   @Get('users')
-  async getUsers(
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ) {
-    const pageNum = page ? parseInt(page, 10) : 1;
-    const limitNum = limit ? parseInt(limit, 10) : 20;
-    return this.adminService.getUsers(pageNum, limitNum);
+  async getUsers(@Query() query: AdminUserQueryDto) {
+    return this.adminService.getUsers(query);
   }
 
   @Get('stats')
@@ -33,14 +50,24 @@ export class AdminController {
     return this.adminService.banUser(userId);
   }
 
+  @Post('users/:id/unban')
+  async unbanUser(@Param('id') userId: string) {
+    return this.adminService.unbanUser(userId);
+  }
+
+  @Patch('users/:id/tier')
+  async updateSubscriptionTier(
+    @Param('id') userId: string,
+    @Body() body: UpdateTierBodyDto,
+  ) {
+    return this.adminService.updateSubscriptionTier(userId, body.tier);
+  }
+
   @Post('photos/:id/verify')
   async verifyPhoto(
     @Param('id') photoId: string,
-    @Body() body: { status: string },
+    @Body() body: VerifyPhotoBodyDto,
   ) {
-    if (body.status !== 'approved' && body.status !== 'rejected') {
-      throw new BadRequestException('Status must be approved or rejected');
-    }
-    return this.adminService.verifyPhoto(photoId, body.status as 'approved' | 'rejected');
+    return this.adminService.verifyPhoto(photoId, body.status);
   }
 }
