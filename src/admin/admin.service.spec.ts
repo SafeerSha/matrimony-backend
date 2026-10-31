@@ -16,6 +16,7 @@ describe('AdminService', () => {
       count: jest.fn<any>(),
       findUnique: jest.fn<any>(),
       update: jest.fn<any>(),
+      delete: jest.fn<any>(),
     },
     subscriptionEvent: {
       create: jest.fn<any>(),
@@ -196,6 +197,95 @@ describe('AdminService', () => {
         objectKey: 'uploads/users/u1/test.jpg',
         storageProvider: 'r2',
       });
+    });
+  });
+  describe('updateUserStatus', () => {
+    it('should update user status to SUSPENDED', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ id: 'u1' });
+      mockPrisma.user.update.mockResolvedValue({
+        id: 'u1',
+        email: 'u1@test.com',
+        status: 'SUSPENDED',
+        isBanned: false,
+      });
+
+      const res = await service.updateUserStatus('u1', 'SUSPENDED');
+      expect(res.status).toBe('SUSPENDED');
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'u1' },
+        data: { isBanned: false, status: 'SUSPENDED' },
+        select: expect.any(Object),
+      });
+    });
+
+    it('should update user status to BLOCKED', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ id: 'u1' });
+      mockPrisma.user.update.mockResolvedValue({
+        id: 'u1',
+        email: 'u1@test.com',
+        status: 'ACTIVE',
+        isBanned: true,
+      });
+
+      const res = await service.updateUserStatus('u1', 'BLOCKED');
+      expect(res.isBanned).toBe(true);
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'u1' },
+        data: { isBanned: true },
+        select: expect.any(Object),
+      });
+    });
+
+    it('should reactivate a deactivated user', async () => {
+      mockPrisma.user.update.mockResolvedValue({
+        id: 'u1',
+        email: 'u1@test.com',
+        status: 'ACTIVE',
+        deactivatedAt: null,
+      });
+
+      const res = await service.reactivateUser('u1');
+      expect(res.status).toBe('ACTIVE');
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'u1' },
+        data: { status: 'ACTIVE', deactivatedAt: null, deletionReason: null },
+        select: expect.any(Object),
+      });
+    });
+
+    it('should restore a deleted user', async () => {
+      mockPrisma.user.update.mockResolvedValue({
+        id: 'u1',
+        email: 'u1@test.com',
+        status: 'ACTIVE',
+        deletedAt: null,
+      });
+
+      const res = await service.restoreUser('u1');
+      expect(res.status).toBe('ACTIVE');
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'u1' },
+        data: { status: 'ACTIVE', deletedAt: null, deletionReason: null },
+        select: expect.any(Object),
+      });
+    });
+
+    it('should purge user data and delete photos', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({
+        id: 'u1',
+        email: 'u1@test.com',
+        photos: [{ id: 'ph1', url: 'https://test.com/ph1.jpg', objectKey: 'ph1', storageProvider: 'local' }],
+      });
+      mockPrisma.user.delete.mockResolvedValue({ id: 'u1' });
+
+      const res = await service.purgeUser('u1');
+      expect(res.success).toBe(true);
+      expect(mockStorageService.deleteFile).toHaveBeenCalledWith({
+        url: 'https://test.com/ph1.jpg',
+        objectKey: 'ph1',
+        storageProvider: 'local',
+      });
+      expect(mockPrisma.user.delete).toHaveBeenCalledWith({ where: { id: 'u1' } });
     });
   });
 });
