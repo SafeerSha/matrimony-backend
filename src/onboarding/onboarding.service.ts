@@ -59,7 +59,8 @@ export class OnboardingService {
     if (!effectiveEducation) missingFields.push('education');
     if (!effectiveAddress) missingFields.push('permanent address');
     if (!effectiveEmail) missingFields.push('email address');
-    if (!effectivePhone) missingFields.push('cell number');
+    const isEmailAuth = (process.env.AUTH_METHOD || '').trim().toUpperCase() === 'EMAIL';
+    if (!isEmailAuth && !effectivePhone) missingFields.push('cell number');
     if (photoCount === 0 && !dto.skipPhotoCheck) {
       missingFields.push('at least one profile photo');
     }

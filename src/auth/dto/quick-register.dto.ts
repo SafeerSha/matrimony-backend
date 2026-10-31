@@ -20,10 +20,10 @@ export class QuickRegisterDto {
   @IsEmail({}, { message: 'A valid email address is required' })
   email?: string;
 
-  @IsNotEmpty({ message: 'Phone number is required' })
+  @IsOptional()
   @IsString()
   @MaxLength(30)
-  phone!: string;
+  phone?: string;
 
   @IsOptional()
   @IsString()

@@ -1,10 +1,10 @@
-import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class VerifyRegistrationDto {
-  @IsNotEmpty({ message: 'Phone number is required' })
+  @IsOptional()
   @IsString()
   @MaxLength(30)
-  phone!: string;
+  phone?: string;
 
   @IsOptional()
   @IsString()

@@ -84,10 +84,10 @@ export class AuthService {
 
   async quickRegister(dto: QuickRegisterDto, deviceInfo?: ParsedDeviceInfo) {
     const normalizedEmail = dto.email ? dto.email.trim().toLowerCase() : null;
-    const normalizedPhone = normalizePhoneNumber(dto.phone);
+    const normalizedPhone = dto.phone ? normalizePhoneNumber(dto.phone) : null;
 
-    if (!normalizedPhone) {
-      throw new BadRequestException('A valid phone number is required');
+    if (!normalizedPhone && !normalizedEmail) {
+      throw new BadRequestException('A valid email address or phone number is required');
     }
 
     const { firstName, lastName } = splitFullName(dto.name, dto.firstName, dto.lastName);
@@ -104,20 +104,22 @@ export class AuthService {
     }
 
     // Collision check: does email or phone exist?
-    // Avoid checking { email: null } because that would match all users without emails
-    const orConditions: Array<{ email?: string; phone?: string }> = [{ phone: normalizedPhone }];
+    const orConditions: Array<{ email?: string; phone?: string }> = [];
+    if (normalizedPhone) {
+      orConditions.push({ phone: normalizedPhone });
+    }
     if (normalizedEmail) {
       orConditions.push({ email: normalizedEmail });
     }
 
-    const existingUser = await this.prisma.user.findFirst({
+    const existingUser = orConditions.length > 0 ? await this.prisma.user.findFirst({
       where: {
         OR: orConditions,
       },
       include: {
         profile: true,
       },
-    });
+    }) : null;
 
     if (existingUser) {
       if (existingUser.status === 'ACTIVE' || existingUser.status === 'PENDING_VERIFICATION') {
@@ -315,35 +317,53 @@ export class AuthService {
   }
 
   async sendOtp(dto: SendOtpDto) {
-    const normalizedPhone = normalizePhoneNumber(dto.phone);
-    if (!normalizedPhone) {
-      throw new BadRequestException('A valid 10-digit mobile number is required');
+    const normalizedEmail = dto.email ? dto.email.trim().toLowerCase() : null;
+    const normalizedPhone = dto.phone ? normalizePhoneNumber(dto.phone) : null;
+
+    if (!normalizedPhone && !normalizedEmail) {
+      throw new BadRequestException('A valid email address or 10-digit mobile number is required');
     }
 
     if (dto.purpose === 'login') {
+      const userWhere = normalizedEmail ? { email: normalizedEmail } : { phone: normalizedPhone! };
       const existingUser = await this.prisma.user.findFirst({
-        where: { phone: normalizedPhone },
+        where: userWhere,
       });
       if (!existingUser) {
         throw new NotFoundException({
           code: 'ACCOUNT_NOT_FOUND',
-          message: 'No account found with this mobile number. Please register first.',
+          message: normalizedEmail
+            ? 'No account found with this email address. Please register first.'
+            : 'No account found with this mobile number. Please register first.',
         });
       }
     }
 
-    // Invalidate any previous unconsumed OTPs for this phone number
-    await this.prisma.otpVerification.updateMany({
-      where: {
-        phone: normalizedPhone,
-        consumed: false,
-      },
-      data: {
-        consumed: true,
-      },
-    });
+    // Invalidate any previous unconsumed OTPs
+    if (normalizedEmail) {
+      await this.prisma.otpVerification.updateMany({
+        where: {
+          email: normalizedEmail,
+          consumed: false,
+        },
+        data: {
+          consumed: true,
+        },
+      });
+    }
+    if (normalizedPhone) {
+      await this.prisma.otpVerification.updateMany({
+        where: {
+          phone: normalizedPhone,
+          consumed: false,
+        },
+        data: {
+          consumed: true,
+        },
+      });
+    }
 
-    // Skip real SMS sending and accept default 123456 OTP
+    // Default development / preview OTP
     const defaultOtp = '123456';
     const codeHash = crypto
       .createHmac('sha256', this.getOtpSecret())
@@ -355,6 +375,8 @@ export class AuthService {
     await this.prisma.otpVerification.create({
       data: {
         phone: normalizedPhone,
+        email: normalizedEmail,
+        channel: normalizedEmail ? 'EMAIL' : 'SMS',
         codeHash,
         attempts: 0,
         consumed: false,
@@ -362,35 +384,50 @@ export class AuthService {
       },
     });
 
-    const maskedPhone = `${normalizedPhone.slice(0, 3)}****${normalizedPhone.slice(-4)}`;
-    console.log(`[SMS-SERVICE] Mobile OTP bypassed for ${maskedPhone}. Default OTP: 123456`);
+    if (normalizedEmail) {
+      console.log(`[EMAIL-SERVICE] Email OTP simulated for ${normalizedEmail}. Default OTP: ${defaultOtp}`);
+    }
+    if (normalizedPhone) {
+      const maskedPhone = `${normalizedPhone.slice(0, 3)}****${normalizedPhone.slice(-4)}`;
+      console.log(`[SMS-SERVICE] Mobile OTP bypassed for ${maskedPhone}. Default OTP: ${defaultOtp}`);
+    }
 
     return {
-      message: 'Verification code sent successfully',
+      message: normalizedEmail
+        ? `Verification code sent successfully to ${normalizedEmail}`
+        : 'Verification code sent successfully',
       defaultOtp: '123456',
     };
   }
 
   async verifyOtp(dto: VerifyOtpDto, allowCreate = false, deviceInfo?: ParsedDeviceInfo) {
-    const code = (dto.otp || dto.phoneOtp || '').trim();
+    const code = (dto.otp || dto.emailOtp || dto.phoneOtp || '').trim();
     if (!code) {
       throw new BadRequestException('A valid 6-digit OTP code is required');
     }
 
-    const normalizedPhone = normalizePhoneNumber(dto.phone);
-    if (!normalizedPhone) {
-      throw new BadRequestException('A valid 10-digit mobile number is required');
+    const normalizedEmail = dto.email ? dto.email.trim().toLowerCase() : null;
+    const normalizedPhone = dto.phone ? normalizePhoneNumber(dto.phone) : null;
+
+    if (!normalizedPhone && !normalizedEmail) {
+      throw new BadRequestException('A valid email address or mobile number is required');
     }
 
     const isDefaultOtp = code === '123456';
 
-    // Lookup latest unconsumed OtpVerification for phone where expiresAt > NOW()
+    // Lookup latest unconsumed OtpVerification where expiresAt > NOW()
+    const otpWhere: any = {
+      consumed: false,
+      expiresAt: { gt: new Date() },
+    };
+    if (normalizedEmail) {
+      otpWhere.email = normalizedEmail;
+    } else if (normalizedPhone) {
+      otpWhere.phone = normalizedPhone;
+    }
+
     const otpRecord = await this.prisma.otpVerification.findFirst({
-      where: {
-        phone: normalizedPhone,
-        consumed: false,
-        expiresAt: { gt: new Date() },
-      },
+      where: otpWhere,
       orderBy: { createdAt: 'desc' },
     });
 
@@ -450,8 +487,15 @@ export class AuthService {
     }
 
     // Find User
+    const userWhere: any = {};
+    if (normalizedEmail) {
+      userWhere.email = normalizedEmail;
+    } else {
+      userWhere.phone = normalizedPhone;
+    }
+
     let user = await this.prisma.user.findFirst({
-      where: { phone: normalizedPhone },
+      where: userWhere,
       include: { profile: true },
     });
 
@@ -462,14 +506,19 @@ export class AuthService {
 
       user = await this.prisma.user.update({
         where: { id: user.id },
-        data: { isPhoneVerified: true },
+        data: {
+          isPhoneVerified: normalizedPhone ? true : user.isPhoneVerified,
+          isEmailVerified: normalizedEmail ? true : user.isEmailVerified,
+        },
         include: { profile: true },
       });
     } else {
       if (!allowCreate) {
         throw new NotFoundException({
           code: 'ACCOUNT_NOT_FOUND',
-          message: 'No account found with this mobile number. Please register first.',
+          message: normalizedEmail
+            ? 'No account found with this email address. Please register first.'
+            : 'No account found with this mobile number. Please register first.',
         });
       }
 
@@ -478,7 +527,9 @@ export class AuthService {
         const newUser = await tx.user.create({
           data: {
             phone: normalizedPhone,
-            isPhoneVerified: true,
+            email: normalizedEmail,
+            isPhoneVerified: Boolean(normalizedPhone),
+            isEmailVerified: Boolean(normalizedEmail),
             passwordHash: null,
             status: 'DRAFT',
             role: 'USER',
@@ -531,8 +582,8 @@ export class AuthService {
   }
 
   async verifyRegistration(dto: VerifyRegistrationDto, deviceInfo?: ParsedDeviceInfo) {
-    const code = (dto.phoneOtp || dto.otp || '').trim();
-    const result = await this.verifyOtp({ phone: dto.phone, otp: code }, true, deviceInfo);
+    const code = (dto.emailOtp || dto.phoneOtp || dto.otp || '').trim();
+    const result = await this.verifyOtp({ phone: dto.phone, email: dto.email, otp: code }, true, deviceInfo);
 
     if (dto.email && result.user) {
       const normalizedEmail = dto.email.trim().toLowerCase();
