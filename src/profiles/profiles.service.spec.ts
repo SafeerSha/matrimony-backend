@@ -1,7 +1,8 @@
+import { jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ProfilesService, calculateAge, formatPreferencesObject } from './profiles.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 
 describe('ProfilesService', () => {
   let service: ProfilesService;
@@ -11,12 +12,17 @@ describe('ProfilesService', () => {
     profile: {
       upsert: jest.fn(),
       findFirst: jest.fn(),
+      findUnique: jest.fn(),
     },
     preference: {
       upsert: jest.fn(),
     },
     user: {
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      update: jest.fn(),
+    },
+    otpVerification: {
       findFirst: jest.fn(),
       update: jest.fn(),
     },
@@ -202,9 +208,42 @@ describe('ProfilesService', () => {
     it('should throw ConflictException if updated email belongs to another user', async () => {
       const userId = '1';
       const dto = { email: 'duplicate@test.com' };
+      mockPrisma.user.findUnique.mockResolvedValue({ id: '1', email: 'original@test.com' });
       mockPrisma.user.findFirst.mockResolvedValue({ id: 'other-user', email: 'duplicate@test.com' });
 
       await expect(service.updateProfile(userId, dto)).rejects.toThrow(ConflictException);
+    });
+
+    it('should throw BadRequestException if updating email without emailOtp', async () => {
+      const userId = '1';
+      const dto = { email: 'newemail@test.com' };
+      mockPrisma.user.findUnique.mockResolvedValue({ id: '1', email: 'original@test.com' });
+      mockPrisma.user.findFirst.mockResolvedValue(null);
+
+      await expect(service.updateProfile(userId, dto)).rejects.toThrow(BadRequestException);
+    });
+
+    it('should update email and set isEmailVerified when valid emailOtp is provided', async () => {
+      const userId = '1';
+      const dto = { email: 'newemail@test.com', emailOtp: '123456' };
+      mockPrisma.user.findUnique.mockResolvedValue({ id: '1', email: 'original@test.com' });
+      mockPrisma.user.findFirst.mockResolvedValue(null);
+      mockPrisma.otpVerification.findFirst.mockResolvedValue({ id: 'otp-1', email: 'newemail@test.com', attempts: 0 });
+      mockPrisma.otpVerification.update.mockResolvedValue({});
+      mockPrisma.user.update.mockResolvedValue({ id: '1', email: 'newemail@test.com', isEmailVerified: true });
+      mockPrisma.profile.upsert.mockResolvedValue({});
+
+      await service.updateProfile(userId, dto);
+
+      expect(mockPrisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: userId },
+          data: expect.objectContaining({
+            email: 'newemail@test.com',
+            isEmailVerified: true,
+          }),
+        }),
+      );
     });
   });
 

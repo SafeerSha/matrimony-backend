@@ -324,6 +324,15 @@ export class AuthService {
       throw new BadRequestException('A valid email address or 10-digit mobile number is required');
     }
 
+    if (dto.purpose === 'change_email' && normalizedEmail) {
+      const existingUser = await this.prisma.user.findFirst({
+        where: { email: normalizedEmail },
+      });
+      if (existingUser) {
+        throw new ConflictException('This email address is already associated with another account.');
+      }
+    }
+
     if (dto.purpose === 'login') {
       const userWhere = normalizedEmail ? { email: normalizedEmail } : { phone: normalizedPhone! };
       const existingUser = await this.prisma.user.findFirst({
