@@ -156,6 +156,7 @@ export class AuthService {
               gender: dto.gender,
               profileFor,
               category,
+              lookingFor: dto.lookingFor,
               lookingIn: dto.lookingIn || dto.community,
               community: dto.community || dto.lookingIn,
               onboardingStep: 1,
@@ -173,6 +174,7 @@ export class AuthService {
               community: dto.community || profile.community,
               category: category || profile.category,
               profileFor: profileFor || profile.profileFor,
+              ...(dto.lookingFor ? { lookingFor: dto.lookingFor } : {}),
             },
           });
         }
@@ -228,6 +230,7 @@ export class AuthService {
           gender: dto.gender,
           profileFor,
           category,
+          lookingFor: dto.lookingFor,
           lookingIn: dto.lookingIn || dto.community,
           community: dto.community || dto.lookingIn,
           onboardingStep: 1,

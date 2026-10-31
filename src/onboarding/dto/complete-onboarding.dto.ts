@@ -21,6 +21,21 @@ export class CompleteOnboardingDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(50)
+  category?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  profileFor?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  lookingFor?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(255)
   education?: string;
 

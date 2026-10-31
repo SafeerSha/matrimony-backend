@@ -94,6 +94,9 @@ export class OnboardingService {
       const profileUpdateData: any = {
         onboardingStep: 5,
         ...(dto.gender ? { gender: dto.gender } : {}),
+        ...(dto.category ? { category: sanitizeText(dto.category, 50) } : {}),
+        ...(dto.profileFor ? { profileFor: sanitizeText(dto.profileFor, 50) } : {}),
+        ...(dto.lookingFor ? { lookingFor: sanitizeText(dto.lookingFor, 100) } : {}),
         ...(dto.dateOfBirth ? { dateOfBirth: new Date(dto.dateOfBirth) } : {}),
         ...(sanitizedEducation ? { education: sanitizedEducation } : {}),
         ...(sanitizedOccupation ? { occupation: sanitizedOccupation } : {}),

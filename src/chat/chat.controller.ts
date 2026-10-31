@@ -1,11 +1,14 @@
 import { Controller, Get, Post, Put, Param, Body, UseGuards } from '@nestjs/common';
 import { ChatService } from './chat.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { SubscriptionPermitGuard, RequirePermit } from '../subscription/guards/subscription-permit.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { SendMessageDto } from './dto/send-message.dto';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 
+@ApiTags('Chat')
+@ApiBearerAuth('JWT-auth')
 @Controller('chat')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, SubscriptionPermitGuard)
 export class ChatController {
   constructor(private readonly chatService: ChatService) {}
 
@@ -15,11 +18,13 @@ export class ChatController {
   }
 
   @Post('initiate/:contactId')
+  @RequirePermit()
   async initiateChat(@CurrentUser() user: any, @Param('contactId') contactId: string) {
     return this.chatService.initiateChat(user.sub, contactId);
   }
 
   @Post('initiate')
+  @RequirePermit()
   async initiateChatBody(@CurrentUser() user: any, @Body('contactId') contactId: string) {
     return this.chatService.initiateChat(user.sub, contactId);
   }
@@ -39,6 +44,7 @@ export class ChatController {
   }
 
   @Post('messages')
+  @RequirePermit()
   async sendMessageHttp(
     @CurrentUser() user: any,
     @Body() body: { receiverId: string; content: string }
@@ -62,4 +68,3 @@ export class ChatController {
     return { success: true };
   }
 }
-

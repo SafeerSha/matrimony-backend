@@ -54,4 +54,9 @@ export class QuickRegisterDto {
   @IsString()
   @MaxLength(100)
   community?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  lookingFor?: string;
 }

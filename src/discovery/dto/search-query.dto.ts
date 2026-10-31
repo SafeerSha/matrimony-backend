@@ -79,6 +79,10 @@ export class SearchQueryDto {
 
   @IsOptional()
   @IsString()
+  category?: string;
+
+  @IsOptional()
+  @IsString()
   intent?: string;
 
   @IsOptional()

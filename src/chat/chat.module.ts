@@ -5,6 +5,7 @@ import { ChatGateway } from './chat.gateway';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigService, ConfigModule } from '@nestjs/config';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { SubscriptionModule } from '../subscription/subscription.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
       inject: [ConfigService],
     }),
     NotificationsModule,
+    SubscriptionModule,
   ],
   providers: [ChatService, ChatGateway],
   controllers: [ChatController],

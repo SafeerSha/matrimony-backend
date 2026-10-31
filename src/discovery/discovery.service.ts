@@ -3,6 +3,14 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SearchQueryDto } from './dto/search-query.dto';
 import { calculateCompatibility } from '../common/utils/compatibility.util';
 
+function isFriendshipIntent(profile?: { category?: string | null; profileFor?: string | null; lookingFor?: string | null } | null): boolean {
+  if (!profile) return false;
+  const cat = (profile.category || '').toLowerCase().trim();
+  const pf = (profile.profileFor || '').toLowerCase().trim();
+  const lf = (profile.lookingFor || '').toLowerCase().trim();
+  return cat.includes('friend') || pf.includes('friend') || lf.includes('friend');
+}
+
 @Injectable()
 export class DiscoveryService {
   constructor(private readonly prisma: PrismaService) {}
@@ -110,18 +118,66 @@ export class DiscoveryService {
       profileConditions.push({ dateOfBirth: dobFilter });
     }
 
-    // Foundation Matchmaking Filter: Opposite gender based on logged-in user
+    // Cross-Category Discovery Filter (Marriage, Friendship, Living Together, or All)
+    const rawCategory = (query.category || '').trim();
+    const isAllCategories = !rawCategory || rawCategory.toLowerCase() === 'all';
+    if (!isAllCategories) {
+      let searchTerms = [rawCategory];
+      const lower = rawCategory.toLowerCase();
+      if (lower.includes('living')) {
+        searchTerms = ['Living Together', 'living_together', 'Living-together', 'living'];
+      } else if (lower.includes('friend')) {
+        searchTerms = ['Friendship', 'friendship', 'Friends', 'friend'];
+      } else if (lower.includes('marr')) {
+        searchTerms = ['Marriage', 'marriage', 'Matrimony', 'matrimony'];
+      }
+
+      profileConditions.push({
+        OR: [
+          ...searchTerms.map((t) => ({ category: { contains: t, mode: 'insensitive' } })),
+          ...searchTerms.map((t) => ({ profileFor: { contains: t, mode: 'insensitive' } })),
+          ...searchTerms.map((t) => ({ lookingFor: { contains: t, mode: 'insensitive' } })),
+        ],
+      });
+    }
+
+    // Dynamic Matchmaking Filter:
+    // If the active category is Friendship (or user registered for friendship and viewing All), show ALL genders by default.
+    // If active category is Marriage or Living Together, enforce opposite gender by default.
     let targetGender = query.gender;
     if (currentUserId) {
       const currentUser = await this.prisma.user.findUnique({
         where: { id: currentUserId },
-        select: { profile: { select: { gender: true } } },
+        select: {
+          profile: {
+            select: {
+              gender: true,
+              category: true,
+              profileFor: true,
+              lookingFor: true,
+            },
+          },
+        },
       });
       const userGender = (currentUser?.profile?.gender || '').toLowerCase().trim();
-      if (userGender === 'male' || userGender === 'man') {
-        targetGender = 'women';
-      } else if (userGender === 'female' || userGender === 'woman') {
-        targetGender = 'men';
+      const userRegisteredFriendship = isFriendshipIntent(currentUser?.profile);
+      const isExploringFriendship = rawCategory.toLowerCase().includes('friend');
+      const shouldShowAllGenders = isExploringFriendship || (userRegisteredFriendship && isAllCategories);
+
+      if (!shouldShowAllGenders) {
+        // Enforce opposite gender by default (unless client explicitly specified a gender other than any)
+        if (!query.gender || query.gender.toLowerCase() === 'any') {
+          if (userGender === 'male' || userGender === 'man') {
+            targetGender = 'women';
+          } else if (userGender === 'female' || userGender === 'woman') {
+            targetGender = 'men';
+          }
+        }
+      } else {
+        // Friendship mode: see ALL genders by default
+        if (!query.gender || query.gender.toLowerCase() === 'any') {
+          targetGender = undefined;
+        }
       }
     }
 
@@ -356,8 +412,13 @@ export class DiscoveryService {
     const maritalStatus = userPref?.maritalStatuses ?? (Array.isArray(profilePrefs.maritalStatus) ? profilePrefs.maritalStatus[0] : profilePrefs.maritalStatus);
     if (maritalStatus && maritalStatus !== 'Open to All' && maritalStatus !== 'Any') query.maritalStatus = maritalStatus;
 
+    const isFriendship = isFriendshipIntent(user.profile);
+
     if (profilePrefs.gender && profilePrefs.gender !== 'any') {
       query.gender = profilePrefs.gender;
+    } else if (isFriendship) {
+      // Friendship users see all genders in recommendations
+      query.gender = 'any';
     } else if (user.profile?.gender) {
       const g = user.profile.gender.toLowerCase();
       if (g === 'male' || g === 'man') query.gender = 'women';
