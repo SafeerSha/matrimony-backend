@@ -59,23 +59,23 @@ export class MailService {
     const smtpUser = this.configService.get<string>('SMTP_USER')?.trim();
     const fromAddress =
       this.configService.get<string>('EMAIL_FROM')?.trim() ||
-      `"Ishtam Matrimony" <${smtpUser}>`;
+      `"Ishtam Chat" <${smtpUser}>`;
 
-    let subject = 'Your Ishtam Matrimony Verification Code';
+    let subject = 'Your Ishtam Chat Verification Code';
     let heading = 'Your Verification Code';
     let subtext = 'Use this 6-digit code to complete verification for your account.';
 
     if (purpose === 'change_email') {
-      subject = 'Verify Your New Email Address - Ishtam Matrimony';
+      subject = 'Verify Your New Email Address - Ishtam Chat';
       heading = 'Verify Your New Email';
-      subtext = 'We received a request to update your registered email address on Ishtam Matrimony.';
+      subtext = 'We received a request to update your registered email address on Ishtam Chat.';
     } else if (purpose === 'login') {
-      subject = 'Your Login Verification Code - Ishtam Matrimony';
+      subject = 'Your Login Verification Code - Ishtam Chat';
       heading = 'Login Verification Code';
-      subtext = 'Use the code below to securely sign in to your Ishtam Matrimony account.';
+      subtext = 'Use the code below to securely sign in to your Ishtam Chat account.';
     } else if (purpose === 'register') {
-      subject = 'Complete Your Registration - Ishtam Matrimony';
-      heading = 'Welcome to Ishtam Matrimony';
+      subject = 'Complete Your Registration - Ishtam Chat';
+      heading = 'Welcome to Ishtam Chat';
       subtext = 'Verify your email address to complete your registration and activate your profile.';
     }
 
@@ -94,7 +94,7 @@ export class MailService {
           <!-- Header Banner -->
           <tr>
             <td style="background: linear-gradient(135deg, #80132E 0%, #A22749 100%); padding: 32px 30px; text-align: center;">
-              <h1 style="margin: 0; color: #FFFFFF; font-size: 26px; font-weight: 800; letter-spacing: -0.5px;">Ishtam Matrimony</h1>
+              <h1 style="margin: 0; color: #FFFFFF; font-size: 26px; font-weight: 800; letter-spacing: -0.5px;">Ishtam Chat</h1>
               <p style="margin: 6px 0 0; color: #FCE8EE; font-size: 13px; font-weight: 500;">Trusted Kerala Matrimonial Platform</p>
             </td>
           </tr>
@@ -114,7 +114,7 @@ export class MailService {
               <!-- Security Notice -->
               <div style="background-color: #FAF3EC; border-radius: 12px; padding: 14px 16px; margin-bottom: 24px; border: 1px solid #EAD8C7;">
                 <p style="margin: 0; font-size: 12px; line-height: 1.5; color: #4A3F43;">
-                  <strong>🔒 Security Tip:</strong> Never share this code with anyone. Ishtam Matrimony staff will never ask for your verification code or password.
+                  <strong>🔒 Security Tip:</strong> Never share this code with anyone. Ishtam Chat staff will never ask for your verification code or password.
                 </p>
               </div>
 
@@ -127,7 +127,7 @@ export class MailService {
           <tr>
             <td style="background-color: #F8F4F1; padding: 20px 30px; text-align: center; border-top: 1px solid #EAD8C7;">
               <p style="margin: 0; font-size: 11px; color: #9C8F94;">
-                &copy; ${new Date().getFullYear()} Ishtam Matrimony. All rights reserved.
+                &copy; ${new Date().getFullYear()} Ishtam Chat. All rights reserved.
               </p>
             </td>
           </tr>
