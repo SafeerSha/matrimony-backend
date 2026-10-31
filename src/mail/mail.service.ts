@@ -99,7 +99,7 @@ export class MailService {
           <tr>
             <td style="background: linear-gradient(135deg, #80132E 0%, #A22749 100%); padding: 32px 30px; text-align: center;">
               <h1 style="margin: 0; color: #FFFFFF; font-size: 26px; font-weight: 800; letter-spacing: -0.5px;">Ishtam Chat</h1>
-              <p style="margin: 6px 0 0; color: #FCE8EE; font-size: 13px; font-weight: 500;">Trusted Kerala Matrimonial Platform</p>
+              <p style="margin: 6px 0 0; color: #FCE8EE; font-size: 13px; font-weight: 500;">Kerala's Trusted Platform for Meaningful Connections</p>
             </td>
           </tr>
           <!-- Body -->
