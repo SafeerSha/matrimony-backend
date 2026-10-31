@@ -146,6 +146,47 @@ export class AdminService {
     return { totalUsers, totalMatches, unverifiedPhotos };
   }
 
+  async updateUserStatus(
+    userId: string,
+    newStatus: 'ACTIVE' | 'BLOCKED' | 'SUSPENDED' | 'DEACTIVATED',
+  ) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    const updateData: Prisma.UserUpdateInput = {};
+
+    if (newStatus === 'BLOCKED') {
+      updateData.isBanned = true;
+    } else if (newStatus === 'ACTIVE') {
+      updateData.isBanned = false;
+      updateData.status = 'ACTIVE';
+      updateData.deactivatedAt = null;
+      updateData.deletedAt = null;
+      updateData.deletionReason = null;
+    } else if (newStatus === 'SUSPENDED') {
+      updateData.isBanned = false;
+      updateData.status = 'SUSPENDED';
+    } else if (newStatus === 'DEACTIVATED') {
+      updateData.isBanned = false;
+      updateData.status = 'DEACTIVATED';
+      updateData.deactivatedAt = new Date();
+      updateData.deletionReason = 'Deactivated by administrator';
+    }
+
+    return await this.prisma.user.update({
+      where: { id: userId },
+      data: updateData,
+      select: {
+        id: true,
+        email: true,
+        status: true,
+        isBanned: true,
+        deactivatedAt: true,
+        deletedAt: true,
+      },
+    });
+  }
+
   async reactivateUser(userId: string) {
     try {
       return await this.prisma.user.update({

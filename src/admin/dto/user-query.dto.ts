@@ -40,6 +40,13 @@ export class AdminUserQueryDto {
   status?: StatusFilter = 'ALL';
 }
 
+export class UpdateStatusBodyDto {
+  @IsIn(['ACTIVE', 'BLOCKED', 'SUSPENDED', 'DEACTIVATED'], {
+    message: 'status must be ACTIVE, BLOCKED, SUSPENDED, or DEACTIVATED',
+  })
+  status!: 'ACTIVE' | 'BLOCKED' | 'SUSPENDED' | 'DEACTIVATED';
+}
+
 export class UpdateTierBodyDto {
   @IsIn(['BASIC', 'PAID'], { message: 'tier must be BASIC or PAID' })
   tier!: 'BASIC' | 'PAID';

@@ -7,7 +7,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { AnalyticsQueryDto, AnalyticsTimeSeriesQueryDto } from './dto/analytics-query.dto';
-import { AdminUserQueryDto, UpdateTierBodyDto, VerifyPhotoBodyDto } from './dto/user-query.dto';
+import { AdminUserQueryDto, UpdateStatusBodyDto, UpdateTierBodyDto, VerifyPhotoBodyDto } from './dto/user-query.dto';
 
 @ApiTags('Admin')
 @ApiBearerAuth('JWT-auth')
@@ -68,6 +68,14 @@ export class AdminController {
   @Post('users/:id/unban')
   async unbanUser(@Param('id') userId: string) {
     return this.adminService.unbanUser(userId);
+  }
+
+  @Patch('users/:id/status')
+  async updateUserStatus(
+    @Param('id') userId: string,
+    @Body() body: UpdateStatusBodyDto,
+  ) {
+    return this.adminService.updateUserStatus(userId, body.status);
   }
 
   @Patch('users/:id/tier')
