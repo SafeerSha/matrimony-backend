@@ -11,6 +11,7 @@ import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { Logger } from '@nestjs/common';
 import { ChatService } from './chat.service';
+import { SubscriptionService } from '../subscription/subscription.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 @WebSocketGateway({
@@ -30,6 +31,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly jwtService: JwtService,
     private readonly chatService: ChatService,
     private readonly prisma: PrismaService,
+    private readonly subscriptionService: SubscriptionService,
   ) {}
 
   isUserOnline(userId: string): boolean {
@@ -156,6 +158,17 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const senderId = client.data?.user?.sub;
     if (!senderId) {
       return { event: 'error', data: 'Unauthorized' };
+    }
+
+    const hasPermit = await this.subscriptionService.hasActiveChatPermit(senderId);
+    if (!hasPermit) {
+      return {
+        event: 'subscription_required',
+        data: {
+          code: 'PERMIT_REQUIRED',
+          message: 'An active Chat Permit is required to send messages.',
+        },
+      };
     }
 
     if (!payload?.receiverId || !payload?.content?.trim()) {

@@ -59,7 +59,8 @@ export class OnboardingService {
     if (!effectiveEducation) missingFields.push('education');
     if (!effectiveAddress) missingFields.push('permanent address');
     if (!effectiveEmail) missingFields.push('email address');
-    if (!effectivePhone) missingFields.push('cell number');
+    const isEmailAuth = (process.env.AUTH_METHOD || '').trim().toUpperCase() === 'EMAIL';
+    if (!isEmailAuth && !effectivePhone) missingFields.push('cell number');
     if (photoCount === 0 && !dto.skipPhotoCheck) {
       missingFields.push('at least one profile photo');
     }
@@ -94,12 +95,15 @@ export class OnboardingService {
       const profileUpdateData: any = {
         onboardingStep: 5,
         ...(dto.gender ? { gender: dto.gender } : {}),
+        ...(dto.category ? { category: sanitizeText(dto.category, 50) } : {}),
+        ...(dto.profileFor ? { profileFor: sanitizeText(dto.profileFor, 50) } : {}),
+        ...(dto.lookingFor ? { lookingFor: sanitizeText(dto.lookingFor, 100) } : {}),
         ...(dto.dateOfBirth ? { dateOfBirth: new Date(dto.dateOfBirth) } : {}),
         ...(sanitizedEducation ? { education: sanitizedEducation } : {}),
         ...(sanitizedOccupation ? { occupation: sanitizedOccupation } : {}),
         ...(sanitizedEmploymentStatus ? { employmentStatus: sanitizedEmploymentStatus } : {}),
         ...(dto.bio ? { bio: sanitizeText(dto.bio) } : {}),
-        ...(dto.maritalStatus ? { maritalStatus: dto.maritalStatus } : {}),
+        ...(dto.maritalStatus ? { maritalStatus: sanitizeText(dto.maritalStatus, 50) } : {}),
         ...(dto.city ? { city: sanitizeText(dto.city, 100) } : {}),
         ...(dto.state ? { state: sanitizeText(dto.state, 100) } : {}),
         ...(dto.country ? { country: sanitizeText(dto.country, 100) } : {}),

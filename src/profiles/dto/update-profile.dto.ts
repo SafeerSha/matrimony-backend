@@ -25,6 +25,11 @@ export class UpdateProfileDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(6)
+  emailOtp?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(50)
   firstName?: string;
 

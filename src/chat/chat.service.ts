@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { SubscriptionService } from '../subscription/subscription.service';
 import { calculateCompatibility } from '../common/utils/compatibility.util';
 
 @Injectable()
@@ -12,6 +13,7 @@ export class ChatService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly subscriptionService: SubscriptionService,
   ) {}
 
   /**
@@ -258,7 +260,16 @@ export class ChatService {
       throw new ForbiddenException('Cannot message this profile.');
     }
 
-    // Ensure connection is established and accepted so mutual conversations/matches are active
+    // Server-side Permit Guard
+    const hasPermit = await this.subscriptionService.hasActiveChatPermit(senderId);
+    if (!hasPermit) {
+      throw new ForbiddenException({
+        code: 'PERMIT_REQUIRED',
+        message: 'An active Chat Permit is required to send messages.',
+      });
+    }
+
+    // Require accepted connection or existing conversation history
     const existingConnection = await this.prisma.connection.findFirst({
       where: {
         OR: [
@@ -268,19 +279,22 @@ export class ChatService {
       },
     });
 
-    if (!existingConnection) {
-      await this.prisma.connection.create({
-        data: {
-          senderId,
-          receiverId,
-          status: 'ACCEPTED',
+    if (!existingConnection || existingConnection.status !== 'ACCEPTED') {
+      const hasHistory = await this.prisma.message.findFirst({
+        where: {
+          OR: [
+            { senderId, receiverId },
+            { senderId: receiverId, receiverId: senderId },
+          ],
         },
       });
-    } else if (existingConnection.status !== 'ACCEPTED') {
-      await this.prisma.connection.update({
-        where: { id: existingConnection.id },
-        data: { status: 'ACCEPTED' },
-      });
+
+      if (!hasHistory) {
+        throw new ForbiddenException({
+          code: 'CONNECTION_REQUIRED',
+          message: 'You can only message members you have mutually connected with.',
+        });
+      }
     }
 
     const message = await this.prisma.message.create({

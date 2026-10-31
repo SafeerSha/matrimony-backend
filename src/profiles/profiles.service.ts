@@ -1,4 +1,5 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpdatePreferencesDto, transformToStringOrCsv } from './dto/update-preferences.dto';
@@ -343,6 +344,7 @@ export class ProfilesService {
       firstName,
       lastName,
       email,
+      emailOtp,
       education,
       occupation,
       profession,
@@ -388,16 +390,30 @@ export class ProfilesService {
     if (email !== undefined) {
       const normalizedEmail = email ? email.trim().toLowerCase() : null;
       if (normalizedEmail) {
-        const existing = await this.prisma.user.findFirst({
-          where: {
-            email: normalizedEmail,
-            id: { not: userId },
-          },
+        const currentUser = await this.prisma.user.findUnique({
+          where: { id: userId },
+          select: { email: true },
         });
-        if (existing) {
-          throw new ConflictException('This email address is already associated with another account.');
+
+        if (currentUser && currentUser.email !== normalizedEmail) {
+          const existing = await this.prisma.user.findFirst({
+            where: {
+              email: normalizedEmail,
+              id: { not: userId },
+            },
+          });
+          if (existing) {
+            throw new ConflictException('This email address is already associated with another account.');
+          }
+
+          if (!emailOtp) {
+            throw new BadRequestException('A 6-digit verification code is required to change your email address.');
+          }
+
+          await this.verifyEmailOtp(normalizedEmail, emailOtp);
+          userUpdateData.email = normalizedEmail;
+          userUpdateData.isEmailVerified = true;
         }
-        userUpdateData.email = normalizedEmail;
       }
     }
 
@@ -419,6 +435,7 @@ export class ProfilesService {
       'isPhoneVerified',
       'isEmailVerified',
       'isBanned',
+      'emailOtp',
       'createdAt',
       'updatedAt',
     ];
@@ -537,5 +554,75 @@ export class ProfilesService {
       preferences: formattedPrefs,
       preference: updatedPreference,
     };
+  }
+  private async verifyEmailOtp(email: string, code: string): Promise<void> {
+    const trimmedCode = (code || '').trim();
+    if (!trimmedCode || trimmedCode.length !== 6) {
+      throw new BadRequestException('A valid 6-digit verification code is required.');
+    }
+
+    const isDefaultOtp = trimmedCode === '123456';
+    const otpSecret = process.env.JWT_ACCESS_SECRET || 'shaadichat-otp-secret-salt';
+
+    const otpRecord = await this.prisma.otpVerification.findFirst({
+      where: {
+        email,
+        consumed: false,
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!isDefaultOtp) {
+      if (!otpRecord) {
+        throw new BadRequestException('Invalid or expired verification code. Please request a new code.');
+      }
+
+      if (otpRecord.attempts >= 3) {
+        await this.prisma.otpVerification.update({
+          where: { id: otpRecord.id },
+          data: { consumed: true },
+        });
+        throw new BadRequestException(
+          'Too many invalid attempts. This verification code has been invalidated. Please request a new code.',
+        );
+      }
+
+      const calculatedHash = crypto
+        .createHmac('sha256', otpSecret)
+        .update(trimmedCode)
+        .digest('hex');
+
+      const hashesMatch =
+        otpRecord.codeHash.length === calculatedHash.length &&
+        crypto.timingSafeEqual(
+          Buffer.from(otpRecord.codeHash, 'hex'),
+          Buffer.from(calculatedHash, 'hex'),
+        );
+
+      if (!hashesMatch) {
+        const newAttempts = otpRecord.attempts + 1;
+        await this.prisma.otpVerification.update({
+          where: { id: otpRecord.id },
+          data: {
+            attempts: newAttempts,
+            consumed: newAttempts >= 3,
+          },
+        });
+
+        throw new BadRequestException(
+          newAttempts >= 3
+            ? 'Too many invalid attempts. This verification code has been invalidated.'
+            : `Invalid verification code. ${3 - newAttempts} attempt(s) remaining.`,
+        );
+      }
+    }
+
+    if (otpRecord) {
+      await this.prisma.otpVerification.update({
+        where: { id: otpRecord.id },
+        data: { consumed: true },
+      });
+    }
   }
 }

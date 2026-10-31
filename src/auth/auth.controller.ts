@@ -9,6 +9,7 @@ import { SendOtpDto } from './dto/send-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { VerifyRegistrationDto } from './dto/verify-registration.dto';
 import { SetPasswordDto } from './dto/set-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { EnablePasswordDto } from './dto/enable-password.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { JwtRefreshAuthGuard } from './guards/jwt-refresh-auth.guard';
@@ -57,6 +58,13 @@ export class AuthController {
     const data = await this.authService.verifyOtp(dto, false, deviceInfo);
     this.setAuthCookies(res, data.accessToken, data.refreshToken);
     return data;
+  }
+
+  @Throttle({ default: { limit: VERIFY_LIMIT, ttl: VERIFY_TTL } })
+  @Post('reset-password')
+  async resetPassword(@Request() req: any, @Body() dto: ResetPasswordDto) {
+    const deviceInfo = this.extractDeviceInfo(req);
+    return this.authService.resetPassword(dto, deviceInfo);
   }
 
   @Throttle({ default: { limit: VERIFY_LIMIT, ttl: VERIFY_TTL } })

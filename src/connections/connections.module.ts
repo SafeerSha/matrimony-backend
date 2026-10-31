@@ -3,9 +3,10 @@ import { ConnectionsService } from './connections.service';
 import { ConnectionsController } from './connections.controller';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ChatModule } from '../chat/chat.module';
+import { SubscriptionModule } from '../subscription/subscription.module';
 
 @Module({
-  imports: [NotificationsModule, ChatModule],
+  imports: [NotificationsModule, ChatModule, SubscriptionModule],
   providers: [ConnectionsService],
   controllers: [ConnectionsController],
   exports: [ConnectionsService],

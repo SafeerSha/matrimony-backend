@@ -18,6 +18,8 @@ import { AdminModule } from './admin/admin.module';
 import { ChatModule } from './chat/chat.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
+import { SubscriptionModule } from './subscription/subscription.module';
+import { MailModule } from './mail/mail.module';
 
 @Module({
   imports: [
@@ -43,6 +45,8 @@ import { OnboardingModule } from './onboarding/onboarding.module';
     ChatModule,
     NotificationsModule,
     OnboardingModule,
+    SubscriptionModule,
+    MailModule,
   ],
   providers: [
     {

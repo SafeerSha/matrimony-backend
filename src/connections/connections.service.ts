@@ -2,6 +2,7 @@ import { Injectable, BadRequestException, NotFoundException, Inject, forwardRef 
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ChatGateway } from '../chat/chat.gateway';
+import { SubscriptionService } from '../subscription/subscription.service';
 import { calculateCompatibility } from '../common/utils/compatibility.util';
 
 @Injectable()
@@ -11,6 +12,7 @@ export class ConnectionsService {
     private readonly notificationsService: NotificationsService,
     @Inject(forwardRef(() => ChatGateway))
     private readonly chatGateway: ChatGateway,
+    private readonly subscriptionService: SubscriptionService,
   ) {}
 
   private formatPartnerPayload(user: any) {
@@ -38,6 +40,12 @@ export class ConnectionsService {
   async sendInterest(senderId: string, receiverId: string) {
     if (senderId === receiverId) {
       throw new BadRequestException('Cannot connect with yourself');
+    }
+
+    // Enforce daily interest quota for anti-spam
+    const quota = await this.subscriptionService.checkAndIncrementInterestQuota(senderId);
+    if (!quota.allowed) {
+      throw new BadRequestException('Daily interest limit reached. Please upgrade to a Chat Permit for unlimited connection requests.');
     }
 
     const receiver = await this.prisma.user.findUnique({ where: { id: receiverId } });
