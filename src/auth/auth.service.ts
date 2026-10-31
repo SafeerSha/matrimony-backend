@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   ConflictException,
   UnauthorizedException,
   BadRequestException,
@@ -29,6 +30,10 @@ import { parseUserAgentAndHeaders, ParsedDeviceInfo } from '../common/utils/devi
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+  private readonly activityThrottleMap = new Map<string, number>();
+  private readonly ACTIVITY_THROTTLE_MS = 5 * 60 * 1000; // 5 minutes
+
   constructor(
     private usersService: UsersService,
     private prisma: PrismaService,
@@ -36,6 +41,28 @@ export class AuthService {
     private configService: ConfigService,
     @Optional() private mailService?: MailService,
   ) {}
+
+  /**
+   * Throttled non-blocking lastActiveAt recording in the auth/refresh path.
+   * Runs at most once per 5 minutes per user, isolated from request failure.
+   */
+  recordActivityThrottled(userId: string): void {
+    const now = Date.now();
+    const last = this.activityThrottleMap.get(userId);
+    if (last && now - last < this.ACTIVITY_THROTTLE_MS) {
+      return;
+    }
+    this.activityThrottleMap.set(userId, now);
+
+    this.prisma.user
+      .update({
+        where: { id: userId },
+        data: { lastActiveAt: new Date(now) },
+      })
+      .catch((err) => {
+        this.logger.warn(`Failed to update lastActiveAt for ${userId}: ${err?.message}`);
+      });
+  }
 
   async getTokens(userId: string, email: string | null | undefined, role: string, sessionId?: string, status?: string) {
     const payload = { sub: userId, email: email || '', role, ...(status ? { status } : {}), ...(sessionId ? { sessionId } : {}) };
@@ -350,6 +377,16 @@ export class AuthService {
             : 'No account found with this mobile number. Please register first.',
         });
       }
+
+      if (existingUser.isBanned) {
+        throw new ForbiddenException('Your account has been banned. Please contact support.');
+      }
+      if (existingUser.status === 'SUSPENDED') {
+        throw new UnauthorizedException('Account is suspended. Please contact support.');
+      }
+      if (existingUser.status === 'DELETED') {
+        throw new ForbiddenException('This account has been deleted.');
+      }
     }
 
     // Invalidate any previous unconsumed OTPs
@@ -524,8 +561,14 @@ export class AuthService {
     });
 
     if (user) {
+      if (user.isBanned) {
+        throw new ForbiddenException('Your account has been banned. Please contact support.');
+      }
       if (user.status === 'SUSPENDED') {
-        throw new UnauthorizedException('Account is suspended');
+        throw new UnauthorizedException('Account is suspended. Please contact support.');
+      }
+      if (user.status === 'DELETED') {
+        throw new ForbiddenException('This account has been deleted.');
       }
 
       user = await this.prisma.user.update({
@@ -669,11 +712,15 @@ export class AuthService {
     }
 
     if (user.isBanned) {
-      throw new ForbiddenException('Your account has been banned');
+      throw new ForbiddenException('Your account has been banned. Please contact support.');
     }
 
     if (user.status === 'SUSPENDED') {
-      throw new UnauthorizedException('Account is suspended');
+      throw new UnauthorizedException('Account is suspended. Please contact support.');
+    }
+
+    if (user.status === 'DELETED') {
+      throw new ForbiddenException('This account has been deleted.');
     }
 
     const passwordMatches = await argon2.verify(user.passwordHash, dto.password);
@@ -992,8 +1039,13 @@ export class AuthService {
       throw new UnauthorizedException('Access Denied');
     }
 
+    if (user.isBanned) {
+      throw new ForbiddenException('Your account has been banned. Please contact support.');
+    }
+
     const tokens = await this.getTokens(user.id, user.email, user.role, sessionId, user.status);
     await this.updateRefreshToken(user.id, tokens.refreshToken, sessionId);
+    this.recordActivityThrottled(user.id);
 
     return tokens;
   }

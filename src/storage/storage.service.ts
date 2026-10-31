@@ -10,27 +10,19 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ImageProcessorService } from './image-processor.service';
 
-export const STORAGE_SERVICE = 'STORAGE_SERVICE';
+import {
+  STORAGE_SERVICE,
+  StorageService,
+  StorageUploadResult,
+  StorageDeleteTarget,
+} from './storage.interface';
 
-export interface StorageUploadResult {
-  url: string;
-  objectKey: string | null;
-  storageProvider: string;
-}
-
-export interface StorageDeleteTarget {
-  url: string;
-  objectKey?: string | null;
-  storageProvider?: string;
-}
-
-export abstract class StorageService {
-  abstract uploadFile(
-    file: Express.Multer.File,
-    userId: string,
-  ): Promise<StorageUploadResult>;
-  abstract deleteFile(target: StorageDeleteTarget): Promise<void>;
-}
+export {
+  STORAGE_SERVICE,
+  StorageService,
+  StorageUploadResult,
+  StorageDeleteTarget,
+};
 
 @Injectable()
 export class LocalStorageService implements StorageService {

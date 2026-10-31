@@ -18,7 +18,11 @@ model User {
   isPhoneVerified    Boolean        @default(false)
   isEmailVerified    Boolean        @default(false)
   role               String         @default("USER") // 'USER', 'ADMIN', 'RM'
-  status             String         @default("DRAFT") // 'DRAFT', 'PENDING_VERIFICATION', 'ACTIVE', 'SUSPENDED'
+  status             String         @default("DRAFT") // 'DRAFT', 'PENDING_VERIFICATION', 'ACTIVE', 'SUSPENDED', 'DEACTIVATED', 'DELETED'
+  deactivatedAt      DateTime?
+  deletedAt          DateTime?
+  deletionReason     String?
+  subscriptionTier   String         @default("BASIC") // 'BASIC', 'PAID'
   firstName          String?
   lastName           String?
   profileId          String?        @unique
@@ -35,13 +39,18 @@ model User {
   photos              Photo[]
   sentMessages        Message[]      @relation("SentMessages")
   receivedMessages    Message[]      @relation("ReceivedMessages")
+  subscriptionEvents  SubscriptionEvent[]
   notifications       Notification[]
   otpVerifications    OtpVerification[]
   devices             UserDevice[]
-  subscriptionTier    String         @default("BASIC")
-  subscriptionEvents  SubscriptionEvent[]
   subscription        Subscription?
   dailyQuotas         UserDailyQuota[]
+
+  @@index([createdAt])
+  @@index([lastActiveAt])
+  @@index([subscriptionTier])
+  @@index([isBanned])
+  @@index([status])
 }
 
 model Profile {
@@ -202,8 +211,6 @@ model UserDevice {
   @@index([userId])
 }
 
-
-
 model Subscription {
   id                  String    @id @default(uuid())
   userId              String    @unique
@@ -240,11 +247,11 @@ model UserDailyQuota {
 model SubscriptionEvent {
   id        String   @id @default(uuid())
   userId    String
-  fromTier  String
-  toTier    String
-  source    String
-  createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fromTier  String   // 'BASIC' | 'PAID'
+  toTier    String   // 'BASIC' | 'PAID'
+  source    String   // 'ADMIN' | 'PAYMENT'
+  createdAt DateTime @default(now())
 
   @@index([createdAt])
   @@index([userId])

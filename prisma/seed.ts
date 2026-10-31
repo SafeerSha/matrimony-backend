@@ -148,8 +148,34 @@ async function main() {
     }
   });
 
-  console.log({ user1, user2, user3, user4 });
-  console.log('Database seeded successfully! You can log in with any email and password "password123".');
+  // Seed Admin User (dev/local verification only)
+  const adminPasswordHash = await argon2.hash(process.env.ADMIN_SEED_PASSWORD || 'Admin@123456');
+  const adminUser = await prisma.user.upsert({
+    where: { email: 'admin@matrimony.com' },
+    update: { role: 'ADMIN', status: 'ACTIVE', isBanned: false },
+    create: {
+      email: 'admin@matrimony.com',
+      passwordHash: adminPasswordHash,
+      isPasswordEnabled: true,
+      firstName: 'System',
+      lastName: 'Administrator',
+      role: 'ADMIN',
+      status: 'ACTIVE',
+      isEmailVerified: true,
+      isPhoneVerified: true,
+      profile: {
+        create: {
+          gender: 'Other',
+          bio: 'System Administrator Account',
+          city: 'Bangalore',
+          country: 'India',
+        },
+      },
+    },
+  });
+
+  console.log({ user1, user2, user3, user4, adminUser });
+  console.log('Database seeded successfully! Admin: admin@matrimony.com / Admin@123456');
 }
 
 main()
