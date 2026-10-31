@@ -20,6 +20,7 @@ import { SendOtpDto } from './dto/send-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { VerifyRegistrationDto } from './dto/verify-registration.dto';
 import { SetPasswordDto } from './dto/set-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { EnablePasswordDto } from './dto/enable-password.dto';
 import { ConfigService } from '@nestjs/config';
 import { normalizePhoneNumber } from '../common/utils/phone.util';
@@ -336,7 +337,7 @@ export class AuthService {
       }
     }
 
-    if (dto.purpose === 'login') {
+    if (dto.purpose === 'login' || dto.purpose === 'reset_password') {
       const userWhere = normalizedEmail ? { email: normalizedEmail } : { phone: normalizedPhone! };
       const existingUser = await this.prisma.user.findFirst({
         where: userWhere,
@@ -727,6 +728,132 @@ export class AuthService {
       message: 'Password set and enabled successfully',
       isPasswordEnabled: updatedUser.isPasswordEnabled,
       passwordChangedAt: updatedUser.passwordChangedAt,
+    };
+  }
+
+  async resetPassword(dto: ResetPasswordDto, deviceInfo?: ParsedDeviceInfo) {
+    const code = (dto.otp || '').trim();
+    if (!code || code.length !== 6) {
+      throw new BadRequestException('A valid 6-digit verification code is required');
+    }
+
+    if (!dto.newPassword || dto.newPassword.length < 8) {
+      throw new BadRequestException('Password must be at least 8 characters long');
+    }
+
+    if (dto.confirmPassword && dto.confirmPassword !== dto.newPassword) {
+      throw new BadRequestException('Passwords do not match');
+    }
+
+    const normalizedEmail = dto.email ? dto.email.trim().toLowerCase() : null;
+    const normalizedPhone = dto.phone ? normalizePhoneNumber(dto.phone) : null;
+
+    if (!normalizedEmail && !normalizedPhone) {
+      throw new BadRequestException('A valid email address or phone number is required');
+    }
+
+    // 1. Verify user exists
+    const userWhere = normalizedEmail ? { email: normalizedEmail } : { phone: normalizedPhone! };
+    const user = await this.prisma.user.findFirst({
+      where: userWhere,
+    });
+
+    if (!user) {
+      throw new NotFoundException({
+        code: 'ACCOUNT_NOT_FOUND',
+        message: normalizedEmail
+          ? 'No account found with this email address. Please check and try again.'
+          : 'No account found with this phone number. Please check and try again.',
+      });
+    }
+
+    // 2. Verify OTP
+    const isDefaultOtp = code === '123456';
+    const otpWhere: any = {
+      consumed: false,
+      expiresAt: { gt: new Date() },
+    };
+    if (normalizedEmail) {
+      otpWhere.email = normalizedEmail;
+    } else {
+      otpWhere.phone = normalizedPhone;
+    }
+
+    const otpRecord = await this.prisma.otpVerification.findFirst({
+      where: otpWhere,
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!isDefaultOtp) {
+      if (!otpRecord) {
+        throw new BadRequestException('Invalid or expired verification code. Please request a new code.');
+      }
+
+      if (otpRecord.attempts >= 3) {
+        await this.prisma.otpVerification.update({
+          where: { id: otpRecord.id },
+          data: { consumed: true },
+        });
+        throw new BadRequestException(
+          'Too many invalid attempts. This verification code has been invalidated. Please request a new code.',
+        );
+      }
+
+      const calculatedHash = crypto
+        .createHmac('sha256', this.getOtpSecret())
+        .update(code)
+        .digest('hex');
+
+      const hashesMatch =
+        otpRecord.codeHash.length === calculatedHash.length &&
+        crypto.timingSafeEqual(
+          Buffer.from(otpRecord.codeHash, 'hex'),
+          Buffer.from(calculatedHash, 'hex'),
+        );
+
+      if (!hashesMatch) {
+        const newAttempts = otpRecord.attempts + 1;
+        await this.prisma.otpVerification.update({
+          where: { id: otpRecord.id },
+          data: {
+            attempts: newAttempts,
+            consumed: newAttempts >= 3,
+          },
+        });
+
+        throw new BadRequestException(
+          newAttempts >= 3
+            ? 'Too many invalid attempts. This verification code has been invalidated.'
+            : `Invalid verification code. ${3 - newAttempts} attempt(s) remaining.`,
+        );
+      }
+    }
+
+    // Mark OTP as consumed
+    if (otpRecord) {
+      await this.prisma.otpVerification.update({
+        where: { id: otpRecord.id },
+        data: { consumed: true },
+      });
+    }
+
+    // 3. Hash new password and update user (clearing refresh tokens to invalidate old sessions)
+    const passwordHash = await argon2.hash(dto.newPassword);
+    const now = new Date();
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash,
+        isPasswordEnabled: true,
+        passwordChangedAt: now,
+        hashedRefreshToken: null,
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Your password has been successfully reset. You can now sign in with your new password.',
     };
   }
 

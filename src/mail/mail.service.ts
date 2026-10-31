@@ -69,6 +69,10 @@ export class MailService {
       subject = 'Verify Your New Email Address - Ishtam Chat';
       heading = 'Verify Your New Email';
       subtext = 'We received a request to update your registered email address on Ishtam Chat.';
+    } else if (purpose === 'reset_password') {
+      subject = 'Reset Your Password - Ishtam Chat';
+      heading = 'Reset Your Password';
+      subtext = 'Use the 6-digit verification code below to securely reset your password on Ishtam Chat.';
     } else if (purpose === 'login') {
       subject = 'Your Login Verification Code - Ishtam Chat';
       heading = 'Login Verification Code';
