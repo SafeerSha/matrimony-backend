@@ -630,8 +630,11 @@ export class AuthService {
     }
 
     if (user.passwordHash === null || user.passwordHash === undefined) {
+      const isEmailAuth = (process.env.AUTH_METHOD || '').trim().toUpperCase() === 'EMAIL';
       throw new BadRequestException(
-        'This account was registered via Mobile OTP and does not have a password set. Please sign in using the Mobile OTP tab.',
+        isEmailAuth
+          ? 'This account does not have a password set yet. Please sign in using the Email OTP tab.'
+          : 'This account was registered via Mobile OTP and does not have a password set. Please sign in using the Mobile OTP tab.',
       );
     }
 
