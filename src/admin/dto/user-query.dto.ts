@@ -2,7 +2,7 @@ import { IsOptional, IsString, IsIn, IsInt, Min, Max, MaxLength } from 'class-va
 import { Type } from 'class-transformer';
 
 const PLAN_VALUES = ['ALL', 'BASIC', 'PAID'] as const;
-const STATUS_VALUES = ['ALL', 'ACTIVE', 'BLOCKED', 'SUSPENDED'] as const;
+const STATUS_VALUES = ['ALL', 'ACTIVE', 'BLOCKED', 'SUSPENDED', 'DEACTIVATED', 'DELETED'] as const;
 
 export type PlanFilter = typeof PLAN_VALUES[number];
 export type StatusFilter = typeof STATUS_VALUES[number];

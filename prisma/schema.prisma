@@ -18,7 +18,10 @@ model User {
   isPhoneVerified    Boolean        @default(false)
   isEmailVerified    Boolean        @default(false)
   role               String         @default("USER") // 'USER', 'ADMIN', 'RM'
-  status             String         @default("DRAFT") // 'DRAFT', 'PENDING_VERIFICATION', 'ACTIVE', 'SUSPENDED'
+  status             String         @default("DRAFT") // 'DRAFT', 'PENDING_VERIFICATION', 'ACTIVE', 'SUSPENDED', 'DEACTIVATED', 'DELETED'
+  deactivatedAt      DateTime?
+  deletedAt          DateTime?
+  deletionReason     String?
   subscriptionTier   String         @default("BASIC") // 'BASIC', 'PAID'
   firstName          String?
   lastName           String?
@@ -40,7 +43,6 @@ model User {
   notifications       Notification[]
   otpVerifications    OtpVerification[]
   devices             UserDevice[]
-  subscriptionTier    String         @default("BASIC")
   subscription        Subscription?
   dailyQuotas         UserDailyQuota[]
 

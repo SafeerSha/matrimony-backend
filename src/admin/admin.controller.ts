@@ -45,6 +45,21 @@ export class AdminController {
     return this.adminService.getStats();
   }
 
+  @Post('users/:id/reactivate')
+  async reactivateUser(@Param('id') userId: string) {
+    return this.adminService.reactivateUser(userId);
+  }
+
+  @Post('users/:id/restore')
+  async restoreUser(@Param('id') userId: string) {
+    return this.adminService.restoreUser(userId);
+  }
+
+  @Post('users/:id/purge')
+  async purgeUser(@Param('id') userId: string) {
+    return this.adminService.purgeUser(userId);
+  }
+
   @Post('users/:id/ban')
   async banUser(@Param('id') userId: string) {
     return this.adminService.banUser(userId);

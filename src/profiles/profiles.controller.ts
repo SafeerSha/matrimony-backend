@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Put,
+  Post,
   Delete,
   Body,
   UseGuards,
@@ -29,6 +30,27 @@ export class ProfilesController {
   @Get('me')
   async getMyProfile(@CurrentUser() user: any) {
     return this.profilesService.getProfile(user.sub);
+  }
+
+  @Post('me/deactivate')
+  async deactivateMyAccount(
+    @CurrentUser() user: any,
+    @Body() body: { reason?: string },
+  ) {
+    return this.profilesService.deactivateAccount(user.sub, body?.reason);
+  }
+
+  @Post('me/delete')
+  async deleteMyAccount(
+    @CurrentUser() user: any,
+    @Body() body: { reason?: string; feedback?: string },
+  ) {
+    return this.profilesService.deleteAccount(user.sub, body?.reason, body?.feedback);
+  }
+
+  @Post('me/reactivate')
+  async reactivateMyAccount(@CurrentUser() user: any) {
+    return this.profilesService.reactivateAccount(user.sub);
   }
 
   @Get(':id')

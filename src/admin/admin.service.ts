@@ -11,6 +11,9 @@ const USER_LIST_SELECT = {
   phone: true,
   role: true,
   status: true,
+  deactivatedAt: true,
+  deletedAt: true,
+  deletionReason: true,
   subscriptionTier: true,
   isBanned: true,
   isPhoneVerified: true,
@@ -102,6 +105,12 @@ export class AdminService {
         case 'SUSPENDED':
           where.status = 'SUSPENDED';
           break;
+        case 'DEACTIVATED':
+          where.status = 'DEACTIVATED';
+          break;
+        case 'DELETED':
+          where.status = 'DELETED';
+          break;
       }
     }
 
@@ -135,6 +144,77 @@ export class AdminService {
     ]);
 
     return { totalUsers, totalMatches, unverifiedPhotos };
+  }
+
+  async reactivateUser(userId: string) {
+    try {
+      return await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          status: 'ACTIVE',
+          deactivatedAt: null,
+          deletionReason: null,
+        },
+        select: { id: true, email: true, status: true, deactivatedAt: true },
+      });
+    } catch (err: any) {
+      if (err?.code === 'P2025') throw new NotFoundException('User not found');
+      throw err;
+    }
+  }
+
+  async restoreUser(userId: string) {
+    try {
+      return await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          status: 'ACTIVE',
+          deletedAt: null,
+          deletionReason: null,
+        },
+        select: { id: true, email: true, status: true, deletedAt: true },
+      });
+    } catch (err: any) {
+      if (err?.code === 'P2025') throw new NotFoundException('User not found');
+      throw err;
+    }
+  }
+
+  async purgeUser(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        photos: {
+          select: { id: true, url: true, objectKey: true, storageProvider: true },
+        },
+      },
+    });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Clean up physical photos from storage
+    for (const photo of user.photos) {
+      try {
+        await this.storageService.deleteFile({
+          url: photo.url,
+          objectKey: photo.objectKey,
+          storageProvider: photo.storageProvider,
+        });
+      } catch {
+        // Storage asset cleanup errors are non-blocking
+      }
+    }
+
+    // Cascade delete user in database
+    await this.prisma.user.delete({ where: { id: userId } });
+
+    return {
+      success: true,
+      message: `User ${userId} and all related records have been permanently purged.`,
+    };
   }
 
   async banUser(userId: string) {

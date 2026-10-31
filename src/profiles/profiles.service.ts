@@ -625,4 +625,76 @@ export class ProfilesService {
       });
     }
   }
+  async deactivateAccount(userId: string, reason?: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        status: 'DEACTIVATED',
+        deactivatedAt: new Date(),
+        deletionReason: reason?.trim() || 'Taking a temporary break',
+        hashedRefreshToken: null,
+      },
+      select: { id: true, status: true, deactivatedAt: true },
+    });
+
+    // Invalidate device sessions
+    await this.prisma.userDevice.deleteMany({ where: { userId } });
+
+    return {
+      success: true,
+      message: 'Your profile has been deactivated. You can reactivate anytime by signing back in.',
+      status: updated.status,
+    };
+  }
+
+  async deleteAccount(userId: string, reason?: string, feedback?: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    const combinedReason = [reason, feedback].filter(Boolean).join(' - ') || 'User requested account deletion';
+
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        status: 'DELETED',
+        deletedAt: new Date(),
+        deletionReason: combinedReason,
+        hashedRefreshToken: null,
+      },
+      select: { id: true, status: true, deletedAt: true },
+    });
+
+    // Invalidate device sessions
+    await this.prisma.userDevice.deleteMany({ where: { userId } });
+
+    return {
+      success: true,
+      message: 'Your account has been scheduled for deletion. Please contact support if you need to restore it.',
+      status: updated.status,
+    };
+  }
+
+  async reactivateAccount(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        status: 'ACTIVE',
+        deactivatedAt: null,
+        deletionReason: null,
+      },
+      select: { id: true, status: true },
+    });
+
+    return {
+      success: true,
+      message: 'Your profile has been reactivated successfully.',
+      status: updated.status,
+    };
+  }
 }
