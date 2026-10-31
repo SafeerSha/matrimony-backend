@@ -377,6 +377,16 @@ export class AuthService {
             : 'No account found with this mobile number. Please register first.',
         });
       }
+
+      if (existingUser.isBanned) {
+        throw new ForbiddenException('Your account has been banned. Please contact support.');
+      }
+      if (existingUser.status === 'SUSPENDED') {
+        throw new UnauthorizedException('Account is suspended. Please contact support.');
+      }
+      if (existingUser.status === 'DELETED') {
+        throw new ForbiddenException('This account has been deleted.');
+      }
     }
 
     // Invalidate any previous unconsumed OTPs
@@ -551,8 +561,14 @@ export class AuthService {
     });
 
     if (user) {
+      if (user.isBanned) {
+        throw new ForbiddenException('Your account has been banned. Please contact support.');
+      }
       if (user.status === 'SUSPENDED') {
-        throw new UnauthorizedException('Account is suspended');
+        throw new UnauthorizedException('Account is suspended. Please contact support.');
+      }
+      if (user.status === 'DELETED') {
+        throw new ForbiddenException('This account has been deleted.');
       }
 
       user = await this.prisma.user.update({
@@ -696,11 +712,15 @@ export class AuthService {
     }
 
     if (user.isBanned) {
-      throw new ForbiddenException('Your account has been banned');
+      throw new ForbiddenException('Your account has been banned. Please contact support.');
     }
 
     if (user.status === 'SUSPENDED') {
-      throw new UnauthorizedException('Account is suspended');
+      throw new UnauthorizedException('Account is suspended. Please contact support.');
+    }
+
+    if (user.status === 'DELETED') {
+      throw new ForbiddenException('This account has been deleted.');
     }
 
     const passwordMatches = await argon2.verify(user.passwordHash, dto.password);
@@ -1017,6 +1037,10 @@ export class AuthService {
     const user = await this.usersService.findById(userId);
     if (!user) {
       throw new UnauthorizedException('Access Denied');
+    }
+
+    if (user.isBanned) {
+      throw new ForbiddenException('Your account has been banned. Please contact support.');
     }
 
     const tokens = await this.getTokens(user.id, user.email, user.role, sessionId, user.status);
