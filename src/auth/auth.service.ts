@@ -5,11 +5,13 @@ import {
   BadRequestException,
   ForbiddenException,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import * as crypto from 'crypto';
 import { UsersService } from '../users/users.service';
+import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -31,6 +33,7 @@ export class AuthService {
     private prisma: PrismaService,
     private jwtService: JwtService,
     private configService: ConfigService,
+    @Optional() private mailService?: MailService,
   ) {}
 
   async getTokens(userId: string, email: string | null | undefined, role: string, sessionId?: string, status?: string) {
@@ -372,11 +375,18 @@ export class AuthService {
       });
     }
 
-    // Default development / preview OTP
-    const defaultOtp = '123456';
+    // Generate OTP code (Live random 6-digit if Gmail SMTP configured, fallback to preview OTP for dev)
+    let otpCode = '123456';
+    let isLiveEmail = false;
+
+    if (normalizedEmail && this.mailService?.isConfigured()) {
+      otpCode = crypto.randomInt(100000, 1000000).toString();
+      isLiveEmail = true;
+    }
+
     const codeHash = crypto
       .createHmac('sha256', this.getOtpSecret())
-      .update(defaultOtp)
+      .update(otpCode)
       .digest('hex');
 
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
@@ -394,18 +404,22 @@ export class AuthService {
     });
 
     if (normalizedEmail) {
-      console.log(`[EMAIL-SERVICE] Email OTP simulated for ${normalizedEmail}. Default OTP: ${defaultOtp}`);
+      if (isLiveEmail) {
+        await this.mailService!.sendOtpEmail(normalizedEmail, otpCode, dto.purpose);
+      } else {
+        console.log(`[EMAIL-SERVICE] Email OTP simulated for ${normalizedEmail}. Default OTP: ${otpCode}`);
+      }
     }
     if (normalizedPhone) {
       const maskedPhone = `${normalizedPhone.slice(0, 3)}****${normalizedPhone.slice(-4)}`;
-      console.log(`[SMS-SERVICE] Mobile OTP bypassed for ${maskedPhone}. Default OTP: ${defaultOtp}`);
+      console.log(`[SMS-SERVICE] Mobile OTP bypassed for ${maskedPhone}. Default OTP: ${otpCode}`);
     }
 
     return {
       message: normalizedEmail
         ? `Verification code sent successfully to ${normalizedEmail}`
         : 'Verification code sent successfully',
-      defaultOtp: '123456',
+      ...(isLiveEmail ? {} : { defaultOtp: '123456' }),
     };
   }
 
