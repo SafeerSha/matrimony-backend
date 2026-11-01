@@ -78,6 +78,7 @@ export function formatPreferencesObject(profilePrefs: any, tablePref: any) {
     income,
     intent,
     language,
+    ...(p.notificationPreferences ? { notificationPreferences: p.notificationPreferences } : {}),
   };
 }
 
@@ -130,6 +131,8 @@ export class ProfilesService {
       profileId: user.profileId,
       email: user.email,
       phone: user.phone,
+      isPhoneVerified: Boolean(user.isPhoneVerified),
+      isEmailVerified: Boolean(user.isEmailVerified),
       firstName: user.firstName || user.profile?.firstName || null,
       lastName: user.lastName || user.profile?.lastName || null,
       status: user.status,
@@ -173,6 +176,14 @@ export class ProfilesService {
       photos: formattedPhotos,
       preferences: formattedPreferences,
       // Backwards-compatibility legacy mappings
+      user: {
+        id: user.id,
+        email: user.email,
+        phone: user.phone,
+        isPhoneVerified: Boolean(user.isPhoneVerified),
+        isEmailVerified: Boolean(user.isEmailVerified),
+        status: user.status,
+      },
       profile: {
         ...(user.profile || {}),
         profileId: user.profileId,

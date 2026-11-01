@@ -573,11 +573,19 @@ export class AuthService {
         throw new ForbiddenException('This account has been deleted.');
       }
 
+      const wasDeactivated = user.status === 'DEACTIVATED';
       user = await this.prisma.user.update({
         where: { id: user.id },
         data: {
           isPhoneVerified: normalizedPhone ? true : user.isPhoneVerified,
           isEmailVerified: normalizedEmail ? true : user.isEmailVerified,
+          ...(wasDeactivated
+            ? {
+                status: 'ACTIVE',
+                deactivatedAt: null,
+                deletionReason: null,
+              }
+            : {}),
         },
         include: { profile: true },
       });
@@ -728,6 +736,20 @@ export class AuthService {
     const passwordMatches = await argon2.verify(user.passwordHash, dto.password);
     if (!passwordMatches) {
       throw new UnauthorizedException('Invalid credentials');
+    }
+
+    if (user.status === 'DEACTIVATED') {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: {
+          status: 'ACTIVE',
+          deactivatedAt: null,
+          deletionReason: null,
+        },
+      });
+      user.status = 'ACTIVE';
+      user.deactivatedAt = null;
+      user.deletionReason = null;
     }
 
     const sessionId = crypto.randomUUID();

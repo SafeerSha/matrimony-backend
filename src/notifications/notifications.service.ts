@@ -6,6 +6,40 @@ export class NotificationsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async createNotification(userId: string, type: string, content: string, referenceId?: string) {
+    // Check user's notification preferences before creating
+    if (type === 'NEW_INTEREST' || type === 'INTEREST_RECEIVED') {
+      const profile = await this.prisma.profile.findUnique({
+        where: { userId },
+        select: { preferences: true },
+      });
+      const prefs = (profile?.preferences as any)?.notificationPreferences;
+      if (prefs && prefs.notifyInterests === false) {
+        return null;
+      }
+    }
+
+    if (type === 'MATCH_RECOMMENDATION' || type === 'RECOMMENDED_MATCH') {
+      const profile = await this.prisma.profile.findUnique({
+        where: { userId },
+        select: { preferences: true },
+      });
+      const prefs = (profile?.preferences as any)?.notificationPreferences;
+      if (prefs && prefs.notifyMatches === false) {
+        return null;
+      }
+    }
+
+    if (type === 'MARKETING' || type === 'PROMOTION') {
+      const profile = await this.prisma.profile.findUnique({
+        where: { userId },
+        select: { preferences: true },
+      });
+      const prefs = (profile?.preferences as any)?.notificationPreferences;
+      if (prefs && prefs.notifyMarketing === false) {
+        return null;
+      }
+    }
+
     return this.prisma.notification.create({
       data: {
         userId,
@@ -26,6 +60,16 @@ export class NotificationsService {
     senderName: string,
     messageContent: string,
   ) {
+    // Check if recipient has muted chat & message alerts
+    const profile = await this.prisma.profile.findUnique({
+      where: { userId: recipientId },
+      select: { preferences: true },
+    });
+    const prefs = (profile?.preferences as any)?.notificationPreferences;
+    if (prefs && prefs.notifyMessages === false) {
+      return null;
+    }
+
     const snippet = messageContent.length > 80 ? `${messageContent.substring(0, 77)}...` : messageContent;
     const content = `${senderName}: ${snippet}`;
 
@@ -181,5 +225,62 @@ export class NotificationsService {
       where: { userId, isRead: false },
       data: { isRead: true },
     });
+  }
+  async getPreferences(userId: string) {
+    const profile = await this.prisma.profile.findUnique({
+      where: { userId },
+      select: { preferences: true },
+    });
+    const prefs = (profile?.preferences as any)?.notificationPreferences || {};
+    return {
+      notifyInterests: prefs.notifyInterests ?? true,
+      notifyMessages: prefs.notifyMessages ?? true,
+      notifyMatches: prefs.notifyMatches ?? true,
+      notifyMarketing: prefs.notifyMarketing ?? false,
+    };
+  }
+
+  async updatePreferences(
+    userId: string,
+    data: {
+      notifyInterests?: boolean;
+      notifyMessages?: boolean;
+      notifyMatches?: boolean;
+      notifyMarketing?: boolean;
+    },
+  ) {
+    const profile = await this.prisma.profile.findUnique({
+      where: { userId },
+      select: { preferences: true },
+    });
+    const currentPrefs = (profile?.preferences as any) || {};
+    const existingNotifPrefs = currentPrefs.notificationPreferences || {};
+
+    const updatedNotifPrefs = {
+      notifyInterests:
+        data.notifyInterests !== undefined ? Boolean(data.notifyInterests) : (existingNotifPrefs.notifyInterests ?? true),
+      notifyMessages:
+        data.notifyMessages !== undefined ? Boolean(data.notifyMessages) : (existingNotifPrefs.notifyMessages ?? true),
+      notifyMatches:
+        data.notifyMatches !== undefined ? Boolean(data.notifyMatches) : (existingNotifPrefs.notifyMatches ?? true),
+      notifyMarketing:
+        data.notifyMarketing !== undefined ? Boolean(data.notifyMarketing) : (existingNotifPrefs.notifyMarketing ?? false),
+    };
+
+    const newPreferences = {
+      ...currentPrefs,
+      notificationPreferences: updatedNotifPrefs,
+    };
+
+    await this.prisma.profile.upsert({
+      where: { userId },
+      update: { preferences: newPreferences },
+      create: {
+        userId,
+        preferences: newPreferences,
+      },
+    });
+
+    return updatedNotifPrefs;
   }
 }

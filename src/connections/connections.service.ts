@@ -121,7 +121,7 @@ export class ConnectionsService {
 
         // 2. Realtime WebSocket Push if receiver is currently online
         this.chatGateway.emitToUser(receiverId, 'match_celebration', {
-          notificationId: notif.id,
+          notificationId: notif?.id,
           partner: partnerForReceiver,
         });
 
@@ -268,7 +268,7 @@ export class ConnectionsService {
 
     // 2. Realtime WebSocket Push to sender if they are currently online
     this.chatGateway.emitToUser(senderId, 'match_celebration', {
-      notificationId: notif.id,
+      notificationId: notif?.id,
       partner: partnerForSender,
     });
 
