@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Param, UseGuards, Query, Body } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Delete, Param, UseGuards, Query, Body } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { AnalyticsService } from './analytics.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -8,6 +8,9 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { AnalyticsQueryDto, AnalyticsTimeSeriesQueryDto } from './dto/analytics-query.dto';
 import { AdminUserQueryDto, UpdateStatusBodyDto, UpdateTierBodyDto, VerifyPhotoBodyDto } from './dto/user-query.dto';
+import { CreatePlanDto, UpdatePlanDto } from './dto/plan.dto';
+import { SubscriptionService } from '../subscription/subscription.service';
+import { ApiOperation } from '@nestjs/swagger';
 
 @ApiTags('Admin')
 @ApiBearerAuth('JWT-auth')
@@ -18,6 +21,7 @@ export class AdminController {
   constructor(
     private readonly adminService: AdminService,
     private readonly analyticsService: AnalyticsService,
+    private readonly subscriptionService: SubscriptionService,
   ) {}
 
   @Get('analytics/overview')
@@ -92,5 +96,48 @@ export class AdminController {
     @Body() body: VerifyPhotoBodyDto,
   ) {
     return this.adminService.verifyPhoto(photoId, body.status);
+  }
+
+  // ==========================================
+  // Plan Configuration Module Endpoints
+  // ==========================================
+
+  @Get('plans')
+  @ApiOperation({ summary: 'List all subscription plans for admin configuration' })
+  async getPlans() {
+    return this.subscriptionService.getAllPlansAdmin();
+  }
+
+  @Post('plans')
+  @ApiOperation({ summary: 'Create a new subscription plan' })
+  async createPlan(@Body() body: CreatePlanDto) {
+    return this.subscriptionService.createPlan(body);
+  }
+
+  @Put('plans/:id')
+  @ApiOperation({ summary: 'Update an existing subscription plan' })
+  async updatePlan(
+    @Param('id') id: string,
+    @Body() body: UpdatePlanDto,
+  ) {
+    return this.subscriptionService.updatePlan(id, body);
+  }
+
+  @Patch('plans/:id/toggle-active')
+  @ApiOperation({ summary: 'Toggle active status of a plan' })
+  async togglePlanActive(@Param('id') id: string) {
+    return this.subscriptionService.togglePlanActive(id);
+  }
+
+  @Patch('plans/:id/toggle-popular')
+  @ApiOperation({ summary: 'Set or toggle plan as the single most popular plan' })
+  async togglePlanPopular(@Param('id') id: string) {
+    return this.subscriptionService.togglePlanPopular(id);
+  }
+
+  @Delete('plans/:id')
+  @ApiOperation({ summary: 'Delete a subscription plan' })
+  async deletePlan(@Param('id') id: string) {
+    return this.subscriptionService.deletePlan(id);
   }
 }
