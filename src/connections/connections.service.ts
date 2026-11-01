@@ -15,6 +15,20 @@ export class ConnectionsService {
     private readonly subscriptionService: SubscriptionService,
   ) {}
 
+  private async resolveUserId(id: string): Promise<string> {
+    if (!id) return id;
+    const user = await this.prisma.user.findUnique({ where: { id }, select: { id: true } });
+    if (user) return user.id;
+    const prof = await this.prisma.profile.findFirst({
+      where: {
+        OR: [{ id }, { user: { profileId: id } }],
+      },
+      select: { userId: true },
+    });
+    if (prof?.userId) return prof.userId;
+    return id;
+  }
+
   private formatPartnerPayload(user: any) {
     if (!user) return null;
     const photos = user.photos || user.profile?.photos || [];
@@ -37,7 +51,8 @@ export class ConnectionsService {
     };
   }
 
-  async sendInterest(senderId: string, receiverId: string) {
+  async sendInterest(senderId: string, rawReceiverId: string) {
+    const receiverId = await this.resolveUserId(rawReceiverId);
     if (senderId === receiverId) {
       throw new BadRequestException('Cannot connect with yourself');
     }
@@ -264,7 +279,8 @@ export class ConnectionsService {
     };
   }
 
-  async rejectInterest(receiverId: string, senderId: string) {
+  async rejectInterest(receiverId: string, rawSenderId: string) {
+    const senderId = await this.resolveUserId(rawSenderId);
     const connection = await this.prisma.connection.findUnique({
       where: {
         senderId_receiverId: {
@@ -284,7 +300,8 @@ export class ConnectionsService {
     });
   }
 
-  async shortlistProfile(userId: string, targetId: string) {
+  async shortlistProfile(userId: string, rawTargetId: string) {
+    const targetId = await this.resolveUserId(rawTargetId);
     if (userId === targetId) {
       throw new BadRequestException('Cannot shortlist yourself');
     }
@@ -339,7 +356,8 @@ export class ConnectionsService {
     });
   }
 
-  async removeShortlist(userId: string, targetId: string) {
+  async removeShortlist(userId: string, rawTargetId: string) {
+    const targetId = await this.resolveUserId(rawTargetId);
     if (userId === targetId) {
       throw new BadRequestException('Cannot remove yourself');
     }

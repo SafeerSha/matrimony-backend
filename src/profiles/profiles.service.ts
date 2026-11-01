@@ -187,6 +187,7 @@ export class ProfilesService {
       this.prisma.profile.findFirst({
         where: {
           OR: [
+            { id: userId },
             { userId },
             { user: { profileId: userId } },
           ],
@@ -318,8 +319,21 @@ export class ProfilesService {
       }
     }
 
+    const resolvedUserId = profile.userId || (profile.user as any)?.id;
+    const resolvedFirstName = sanitizedProfile.firstName || profile.user?.firstName || null;
+    const resolvedLastName = sanitizedProfile.lastName || profile.user?.lastName || null;
+    const resolvedFullName =
+      `${resolvedFirstName || ''} ${resolvedLastName || ''}`.trim() || 'Member';
+
     return {
       ...sanitizedProfile,
+      id: resolvedUserId,
+      userId: resolvedUserId,
+      profileTableId: profile.id,
+      profileId: profile.user?.profileId || (profile as any).profileId,
+      firstName: resolvedFirstName,
+      lastName: resolvedLastName,
+      name: resolvedFullName,
       age: calculatedAge,
       compatibility,
       compatibilityHighlights,
@@ -561,7 +575,6 @@ export class ProfilesService {
       throw new BadRequestException('A valid 6-digit verification code is required.');
     }
 
-    const isDefaultOtp = trimmedCode === '123456';
     const otpSecret = process.env.JWT_ACCESS_SECRET || 'shaadichat-otp-secret-salt';
 
     const otpRecord = await this.prisma.otpVerification.findFirst({
@@ -573,57 +586,54 @@ export class ProfilesService {
       orderBy: { createdAt: 'desc' },
     });
 
-    if (!isDefaultOtp) {
-      if (!otpRecord) {
-        throw new BadRequestException('Invalid or expired verification code. Please request a new code.');
-      }
-
-      if (otpRecord.attempts >= 3) {
-        await this.prisma.otpVerification.update({
-          where: { id: otpRecord.id },
-          data: { consumed: true },
-        });
-        throw new BadRequestException(
-          'Too many invalid attempts. This verification code has been invalidated. Please request a new code.',
-        );
-      }
-
-      const calculatedHash = crypto
-        .createHmac('sha256', otpSecret)
-        .update(trimmedCode)
-        .digest('hex');
-
-      const hashesMatch =
-        otpRecord.codeHash.length === calculatedHash.length &&
-        crypto.timingSafeEqual(
-          Buffer.from(otpRecord.codeHash, 'hex'),
-          Buffer.from(calculatedHash, 'hex'),
-        );
-
-      if (!hashesMatch) {
-        const newAttempts = otpRecord.attempts + 1;
-        await this.prisma.otpVerification.update({
-          where: { id: otpRecord.id },
-          data: {
-            attempts: newAttempts,
-            consumed: newAttempts >= 3,
-          },
-        });
-
-        throw new BadRequestException(
-          newAttempts >= 3
-            ? 'Too many invalid attempts. This verification code has been invalidated.'
-            : `Invalid verification code. ${3 - newAttempts} attempt(s) remaining.`,
-        );
-      }
+    if (!otpRecord) {
+      throw new BadRequestException('Invalid or expired verification code. Please request a new code.');
     }
 
-    if (otpRecord) {
+    if (otpRecord.attempts >= 3) {
       await this.prisma.otpVerification.update({
         where: { id: otpRecord.id },
         data: { consumed: true },
       });
+      throw new BadRequestException(
+        'Too many invalid attempts. This verification code has been invalidated. Please request a new code.',
+      );
     }
+
+    const calculatedHash = crypto
+      .createHmac('sha256', otpSecret)
+      .update(trimmedCode)
+      .digest('hex');
+
+    const hashesMatch =
+      Boolean(otpRecord.codeHash) &&
+      otpRecord.codeHash.length === calculatedHash.length &&
+      crypto.timingSafeEqual(
+        Buffer.from(otpRecord.codeHash, 'hex'),
+        Buffer.from(calculatedHash, 'hex'),
+      );
+
+    if (!hashesMatch) {
+      const newAttempts = otpRecord.attempts + 1;
+      await this.prisma.otpVerification.update({
+        where: { id: otpRecord.id },
+        data: {
+          attempts: newAttempts,
+          consumed: newAttempts >= 3,
+        },
+      });
+
+      throw new BadRequestException(
+        newAttempts >= 3
+          ? 'Too many invalid attempts. This verification code has been invalidated.'
+          : `Invalid verification code. ${3 - newAttempts} attempt(s) remaining.`,
+      );
+    }
+
+    await this.prisma.otpVerification.update({
+      where: { id: otpRecord.id },
+      data: { consumed: true },
+    });
   }
   async deactivateAccount(userId: string, reason?: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });

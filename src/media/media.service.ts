@@ -23,9 +23,9 @@ export class MediaService {
       where: { userId },
     });
 
-    if (existingPhotosCount >= 5) {
+    if (existingPhotosCount >= 3) {
       throw new BadRequestException(
-        'Maximum of 5 photos allowed per user. Please delete an existing photo to upload a new one.',
+        'Maximum of 3 photos allowed per user. Please delete an existing photo to upload a new one.',
       );
     }
 
@@ -61,9 +61,9 @@ export class MediaService {
       where: { userId },
     });
 
-    if (existingPhotosCount + files.length > 5) {
+    if (existingPhotosCount + files.length > 3) {
       throw new BadRequestException(
-        `Maximum of 5 photos allowed per user. You currently have ${existingPhotosCount} photo(s) and cannot upload ${files.length} more.`,
+        `Maximum of 3 photos allowed per user. You currently have ${existingPhotosCount} photo(s) and cannot upload ${files.length} more.`,
       );
     }
 
@@ -132,6 +132,47 @@ export class MediaService {
     return this.prisma.photo.findUnique({
       where: { id: photoId },
     });
+  }
+
+  async replacePhoto(userId: string, photoId: string, file: Express.Multer.File) {
+    const photo = await this.prisma.photo.findUnique({
+      where: { id: photoId },
+    });
+
+    if (!photo || photo.userId !== userId) {
+      throw new NotFoundException('Photo not found');
+    }
+
+    // Upload replacement to storage
+    const uploadResult = await this.storageService.uploadFile(file, userId);
+
+    try {
+      const updated = await this.prisma.photo.update({
+        where: { id: photoId },
+        data: {
+          url: uploadResult.url,
+          objectKey: uploadResult.objectKey,
+          storageProvider: uploadResult.storageProvider,
+        },
+      });
+
+      // Safely delete the old file from storage in the background
+      this.storageService
+        .deleteFile({
+          url: photo.url,
+          objectKey: photo.objectKey,
+          storageProvider: photo.storageProvider,
+        })
+        .catch(() => {});
+
+      return updated;
+    } catch (err) {
+      // Rollback newly uploaded file on DB error
+      try {
+        await this.storageService.deleteFile(uploadResult);
+      } catch {}
+      throw err;
+    }
   }
 
   async deletePhoto(userId: string, photoId: string) {

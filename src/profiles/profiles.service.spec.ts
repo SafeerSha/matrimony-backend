@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import { jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ProfilesService, calculateAge, formatPreferencesObject } from './profiles.service';
@@ -226,9 +227,11 @@ describe('ProfilesService', () => {
     it('should update email and set isEmailVerified when valid emailOtp is provided', async () => {
       const userId = '1';
       const dto = { email: 'newemail@test.com', emailOtp: '123456' };
+      const otpSecret = process.env.JWT_ACCESS_SECRET || 'shaadichat-otp-secret-salt';
+      const expectedHash = crypto.createHmac('sha256', otpSecret).update('123456').digest('hex');
       mockPrisma.user.findUnique.mockResolvedValue({ id: '1', email: 'original@test.com' });
       mockPrisma.user.findFirst.mockResolvedValue(null);
-      mockPrisma.otpVerification.findFirst.mockResolvedValue({ id: 'otp-1', email: 'newemail@test.com', attempts: 0 });
+      mockPrisma.otpVerification.findFirst.mockResolvedValue({ id: 'otp-1', email: 'newemail@test.com', codeHash: expectedHash, attempts: 0 });
       mockPrisma.otpVerification.update.mockResolvedValue({});
       mockPrisma.user.update.mockResolvedValue({ id: '1', email: 'newemail@test.com', isEmailVerified: true });
       mockPrisma.profile.upsert.mockResolvedValue({});

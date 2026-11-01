@@ -474,7 +474,9 @@ export class AuthService {
       throw new BadRequestException('A valid email address or mobile number is required');
     }
 
-    const isDefaultOtp = code === '123456';
+    const isLiveEmail = Boolean(normalizedEmail && this.mailService?.isConfigured());
+    const allowDefaultOtp = process.env.NODE_ENV !== 'production' && !isLiveEmail;
+    const isDefaultOtp = allowDefaultOtp && code === '123456';
 
     // Lookup latest unconsumed OtpVerification where expiresAt > NOW()
     const otpWhere: any = {
@@ -815,7 +817,9 @@ export class AuthService {
     }
 
     // 2. Verify OTP
-    const isDefaultOtp = code === '123456';
+    const isLiveEmail = Boolean(normalizedEmail && this.mailService?.isConfigured());
+    const allowDefaultOtp = process.env.NODE_ENV !== 'production' && !isLiveEmail;
+    const isDefaultOtp = allowDefaultOtp && code === '123456';
     const otpWhere: any = {
       consumed: false,
       expiresAt: { gt: new Date() },

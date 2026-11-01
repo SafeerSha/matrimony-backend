@@ -192,7 +192,13 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       return { event: 'message_sent', data: message };
     } catch (error: any) {
-      return { event: 'error', data: error.message || 'Failed to send message' };
+      const response = typeof error?.getResponse === 'function' ? error.getResponse() : error?.response;
+      const message =
+        (typeof response === 'object' && response?.message)
+          ? response.message
+          : (typeof response === 'string' ? response : error?.message || 'Failed to send message');
+      const code = (typeof response === 'object' && response?.code) ? response.code : 'ERROR';
+      return { event: 'error', data: { code, message } };
     }
   }
 

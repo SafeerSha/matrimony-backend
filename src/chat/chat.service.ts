@@ -186,10 +186,25 @@ export class ChatService {
     );
   }
 
+  private async resolveUserId(id: string): Promise<string> {
+    if (!id) return id;
+    const user = await this.prisma.user.findUnique({ where: { id }, select: { id: true } });
+    if (user) return user.id;
+    const prof = await this.prisma.profile.findFirst({
+      where: {
+        OR: [{ id }, { user: { profileId: id } }],
+      },
+      select: { userId: true },
+    });
+    if (prof?.userId) return prof.userId;
+    return id;
+  }
+
   /**
    * Retrieves message history between two users.
    */
-  async getChatHistory(userId: string, contactId: string) {
+  async getChatHistory(userId: string, rawContactId: string) {
+    const contactId = await this.resolveUserId(rawContactId);
     const blocked = await this.prisma.connection.findFirst({
       where: {
         status: 'BLOCKED',
@@ -227,7 +242,8 @@ export class ChatService {
   /**
    * Sends a message to a partner, establishes connection if needed, and triggers notification.
    */
-  async sendMessage(senderId: string, receiverId: string, content: string) {
+  async sendMessage(senderId: string, rawReceiverId: string, content: string) {
+    const receiverId = await this.resolveUserId(rawReceiverId);
     if (senderId === receiverId) {
       throw new BadRequestException('Cannot send messages to yourself.');
     }
@@ -292,7 +308,7 @@ export class ChatService {
       if (!hasHistory) {
         throw new ForbiddenException({
           code: 'CONNECTION_REQUIRED',
-          message: 'You can only message members you have mutually connected with.',
+          message: 'You can only message profiles you have mutually connected with.',
         });
       }
     }
@@ -344,7 +360,8 @@ export class ChatService {
   /**
    * Marks unread messages from a contact as read.
    */
-  async markAsRead(userId: string, contactId: string) {
+  async markAsRead(userId: string, rawContactId: string) {
+    const contactId = await this.resolveUserId(rawContactId);
     await this.prisma.message.updateMany({
       where: {
         receiverId: userId,
@@ -361,7 +378,8 @@ export class ChatService {
     return { success: true };
   }
 
-  async initiateChat(userId: string, contactId: string) {
+  async initiateChat(userId: string, rawContactId: string) {
+    const contactId = await this.resolveUserId(rawContactId);
     if (userId === contactId) {
       throw new ForbiddenException('Cannot initiate chat with yourself.');
     }

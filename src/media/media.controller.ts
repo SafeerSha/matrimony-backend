@@ -83,7 +83,7 @@ export class MediaController {
 
   @Post('upload-multiple')
   @UseInterceptors(
-    FilesInterceptor('photos', 5, {
+    FilesInterceptor('photos', 3, {
       storage: multerStorage,
       fileFilter: imageFileFilter,
       limits: {
@@ -120,6 +120,60 @@ export class MediaController {
   @Patch(':id/primary')
   async setPrimaryPhotoPatch(@CurrentUser() user: any, @Param('id') photoId: string) {
     return this.mediaService.setPrimaryPhoto(user.sub, photoId);
+  }
+
+  @Put(':id')
+  @UseInterceptors(
+    FileInterceptor('photo', {
+      storage: multerStorage,
+      fileFilter: imageFileFilter,
+      limits: {
+        fileSize: 5 * 1024 * 1024,
+      },
+    }),
+  )
+  async replacePhoto(
+    @CurrentUser() user: any,
+    @Param('id') photoId: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('No file uploaded');
+    }
+
+    const isValid = await validateMagicBytes(file.buffer);
+    if (!isValid) {
+      throw new BadRequestException('Invalid file type detected by magic bytes!');
+    }
+
+    return this.mediaService.replacePhoto(user.sub, photoId, file);
+  }
+
+  @Post(':id/replace')
+  @UseInterceptors(
+    FileInterceptor('photo', {
+      storage: multerStorage,
+      fileFilter: imageFileFilter,
+      limits: {
+        fileSize: 5 * 1024 * 1024,
+      },
+    }),
+  )
+  async replacePhotoPost(
+    @CurrentUser() user: any,
+    @Param('id') photoId: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('No file uploaded');
+    }
+
+    const isValid = await validateMagicBytes(file.buffer);
+    if (!isValid) {
+      throw new BadRequestException('Invalid file type detected by magic bytes!');
+    }
+
+    return this.mediaService.replacePhoto(user.sub, photoId, file);
   }
 
   @Delete(':id')

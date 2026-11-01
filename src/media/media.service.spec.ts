@@ -83,8 +83,8 @@ describe('MediaService', () => {
       );
     });
 
-    it('should throw BadRequestException if user already has 5 photos without uploading', async () => {
-      mockPrisma.photo.count.mockResolvedValue(5);
+    it('should throw BadRequestException if user already has 3 photos without uploading', async () => {
+      mockPrisma.photo.count.mockResolvedValue(3);
       const file = { buffer: Buffer.from('test') } as any;
 
       await expect(service.uploadPhoto('1', file)).rejects.toThrow(
@@ -144,8 +144,8 @@ describe('MediaService', () => {
       expect(mockPrisma.photo.create).toHaveBeenCalledTimes(2);
     });
 
-    it('should throw BadRequestException if total exceeds 5 photos without uploading', async () => {
-      mockPrisma.photo.count.mockResolvedValue(4);
+    it('should throw BadRequestException if total exceeds 3 photos without uploading', async () => {
+      mockPrisma.photo.count.mockResolvedValue(2);
       const files = [
         { buffer: Buffer.from('1') },
         { buffer: Buffer.from('2') },
