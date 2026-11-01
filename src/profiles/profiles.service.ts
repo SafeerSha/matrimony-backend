@@ -216,9 +216,9 @@ export class ProfilesService {
               isPhoneVerified: true,
               preference: true,
               photos: {
-                where: { isVerified: true },
                 orderBy: [
                   { isPrimary: 'desc' },
+                  { isVerified: 'desc' },
                   { createdAt: 'desc' },
                 ],
               },

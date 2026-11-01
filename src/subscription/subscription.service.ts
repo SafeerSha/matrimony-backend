@@ -130,6 +130,8 @@ export class SubscriptionService {
       });
       return seeded.map((p) => ({
         id: p.code,
+        code: p.code,
+        dbId: p.id,
         name: p.name,
         badge: p.badge || undefined,
         price: p.price,
@@ -416,9 +418,28 @@ export class SubscriptionService {
       (user?.subscriptionTier && ['PLUS', 'ELITE', 'PREMIUM'].includes(user.subscriptionTier.toUpperCase()))
     );
 
-    const activeTier = isSubscribed
+    const rawTier = isSubscribed
       ? (sub?.tier || user?.subscriptionTier || 'BASIC')
       : 'FREE';
+
+    let activeTier = rawTier;
+    let tierName = rawTier;
+
+    if (isSubscribed && rawTier !== 'FREE') {
+      const matchedPlan = await this.prisma.plan.findFirst({
+        where: {
+          OR: [
+            { id: rawTier },
+            { code: rawTier.toUpperCase() },
+          ],
+        },
+      });
+
+      if (matchedPlan) {
+        activeTier = matchedPlan.code;
+        tierName = matchedPlan.name;
+      }
+    }
 
     const daysRemaining = sub?.expiresAt && !isExpired
       ? Math.max(0, Math.ceil((new Date(sub.expiresAt).getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
@@ -444,6 +465,7 @@ export class SubscriptionService {
     return {
       userId,
       tier: activeTier,
+      tierName,
       status: isSubscribed ? 'ACTIVE' : (isExpired ? 'EXPIRED' : 'INACTIVE'),
       isSubscribed,
       canChat: isSubscribed,
@@ -526,11 +548,13 @@ export class SubscriptionService {
 
     const expiresAt = new Date(baseDate.getTime() + plan.durationDays * 24 * 60 * 60 * 1000);
 
+    const planCode = (plan as any).code || plan.id;
+
     const subscription = await this.prisma.subscription.upsert({
       where: { userId },
       create: {
         userId,
-        tier: plan.id,
+        tier: planCode,
         status: 'ACTIVE',
         canChat: true,
         expiresAt,
@@ -540,7 +564,7 @@ export class SubscriptionService {
         amountPaid: paymentDetails?.amount || plan.price,
       },
       update: {
-        tier: plan.id,
+        tier: planCode,
         status: 'ACTIVE',
         canChat: true,
         expiresAt,
@@ -558,7 +582,7 @@ export class SubscriptionService {
           id: `sub-evt-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
           userId,
           fromTier: existing?.tier || 'FREE',
-          toTier: plan.id,
+          toTier: planCode,
           source: paymentDetails?.paymentId ? 'GATEWAY' : 'MANUAL_ACTIVATION',
         },
       });
@@ -566,7 +590,7 @@ export class SubscriptionService {
       // Keep User.subscriptionTier in sync
       await this.prisma.user.update({
         where: { id: userId },
-        data: { subscriptionTier: plan.id },
+        data: { subscriptionTier: planCode },
       });
     } catch (e: any) {
       this.logger.warn(`Could not log subscription audit event: ${e?.message}`);
