@@ -256,3 +256,26 @@ model SubscriptionEvent {
   @@index([createdAt])
   @@index([userId])
 }
+
+model Plan {
+  id                  String   @id @default(uuid())
+  code                String   @unique // 'BASIC', 'STANDARD', 'PLUS', 'ELITE', etc.
+  name                String   // '1 Month Permit', etc.
+  badge               String?  // 'Basic', 'Most Popular', 'Best Value'
+  price               Float    // 500
+  formattedPrice      String?  // '₹500'
+  period              String   // 'per month', 'Quarterly', etc.
+  durationDays        Int      // 30, 90, 180, 365
+  description         String?  // 'Ideal for trying out the platform and exploring matches.'
+  features            String[] @default([])
+  contactCredits      Int      @default(10)
+  dailyInterestsLimit Int      @default(25)
+  popular             Boolean  @default(false)
+  isActive            Boolean  @default(true)
+  displayOrder        Int      @default(0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([displayOrder])
+}

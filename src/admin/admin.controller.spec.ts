@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 import { AnalyticsService } from './analytics.service';
+import { SubscriptionService } from '../subscription/subscription.service';
 import { Reflector } from '@nestjs/core';
 import { ROLES_KEY } from '../auth/decorators/roles.decorator';
 
@@ -23,12 +24,22 @@ describe('AdminController', () => {
     getTimeSeries: jest.fn(),
   };
 
+  const mockSubscriptionService = {
+    getAllPlansAdmin: jest.fn(),
+    createPlan: jest.fn(),
+    updatePlan: jest.fn(),
+    togglePlanActive: jest.fn(),
+    togglePlanPopular: jest.fn(),
+    deletePlan: jest.fn(),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AdminController],
       providers: [
         { provide: AdminService, useValue: mockAdminService },
         { provide: AnalyticsService, useValue: mockAnalyticsService },
+        { provide: SubscriptionService, useValue: mockSubscriptionService },
       ],
     }).compile();
 
