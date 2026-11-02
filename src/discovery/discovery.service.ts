@@ -124,8 +124,8 @@ export class DiscoveryService {
     if (!isAllCategories) {
       let searchTerms = [rawCategory];
       const lower = rawCategory.toLowerCase();
-      if (lower.includes('living')) {
-        searchTerms = ['Living Together', 'living_together', 'Living-together', 'living'];
+      if (lower.includes('living') || lower.includes('live')) {
+        searchTerms = ['Living Together', 'living_together', 'Living-together', 'living', 'Live-In', 'Live-in', 'live_in', 'live'];
       } else if (lower.includes('friend')) {
         searchTerms = ['Friendship', 'friendship', 'Friends', 'friend'];
       } else if (lower.includes('marr')) {
