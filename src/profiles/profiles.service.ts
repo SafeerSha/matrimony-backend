@@ -163,6 +163,8 @@ export class ProfilesService {
       fatherName: user.profile?.fatherName || null,
       nationality: user.profile?.nationality || 'Indian',
       permanentAddress: user.profile?.permanentAddress || null,
+      workingPlace: user.profile?.workingPlace || null,
+      workLocation: user.profile?.workingPlace || null,
       fatherAlive: user.profile?.fatherAlive ?? true,
       motherAlive: user.profile?.motherAlive ?? true,
       brothersCount: user.profile?.brothersCount ?? 0,
@@ -382,6 +384,8 @@ export class ProfilesService {
       fatherName,
       nationality,
       permanentAddress,
+      workingPlace,
+      workLocation,
       fatherAlive,
       motherAlive,
       brothersCount,
@@ -469,6 +473,7 @@ export class ProfilesService {
     const dob = dateOfBirth ? new Date(dateOfBirth) : undefined;
     const effectiveBio = sanitizeText(bio ?? about, 1500);
     const effectiveOccupation = sanitizeText(occupation ?? profession, 255);
+    const effectiveWorkingPlace = sanitizeText(workingPlace ?? workLocation, 255);
     const effectiveLifestyle = lifestyle !== undefined ? sanitizeStringArray(lifestyle, 20, 100) : undefined;
     const effectiveInterests = interests !== undefined ? sanitizeStringArray(interests, 20, 100) : undefined;
 
@@ -486,6 +491,7 @@ export class ProfilesService {
       ...(fatherName !== undefined ? { fatherName: sanitizeText(fatherName, 100) ?? null } : {}),
       ...(nationality !== undefined ? { nationality: sanitizeText(nationality, 100) ?? null } : {}),
       ...(permanentAddress !== undefined ? { permanentAddress: sanitizeText(permanentAddress, 500) ?? null } : {}),
+      ...(workingPlace !== undefined || workLocation !== undefined ? { workingPlace: effectiveWorkingPlace ?? null } : {}),
       ...(fatherAlive !== undefined ? { fatherAlive } : {}),
       ...(motherAlive !== undefined ? { motherAlive } : {}),
       ...(brothersCount !== undefined ? { brothersCount: Number(brothersCount) } : {}),

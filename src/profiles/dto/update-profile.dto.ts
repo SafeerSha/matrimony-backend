@@ -180,6 +180,16 @@ export class UpdateProfileDto {
   permanentAddress?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  workingPlace?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  workLocation?: string;
+
+  @IsOptional()
   @IsBoolean()
   fatherAlive?: boolean;
 

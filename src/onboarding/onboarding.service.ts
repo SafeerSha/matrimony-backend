@@ -91,6 +91,7 @@ export class OnboardingService {
       const sanitizedEmploymentStatus = sanitizeText(dto.employmentStatus, 100);
       const sanitizedAddress = sanitizeText(dto.permanentAddress, 500);
       const sanitizedFatherName = sanitizeText(dto.fatherName, 100);
+      const sanitizedWorkingPlace = sanitizeText(dto.workingPlace || dto.workLocation, 255);
 
       const profileUpdateData: any = {
         onboardingStep: 5,
@@ -114,6 +115,7 @@ export class OnboardingService {
         ...(dto.height ? { height: sanitizeText(dto.height, 50) } : {}),
         ...(dto.annualIncome || dto.income ? { annualIncome: sanitizeText(dto.annualIncome || dto.income, 100) } : {}),
         ...(sanitizedAddress ? { permanentAddress: sanitizedAddress } : {}),
+        ...(sanitizedWorkingPlace ? { workingPlace: sanitizedWorkingPlace } : {}),
         ...(dto.fatherAlive !== undefined ? { fatherAlive: dto.fatherAlive } : {}),
         ...(dto.motherAlive !== undefined ? { motherAlive: dto.motherAlive } : {}),
         ...(dto.brothersCount !== undefined ? { brothersCount: Number(dto.brothersCount) } : {}),

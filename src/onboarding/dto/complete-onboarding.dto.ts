@@ -111,6 +111,16 @@ export class CompleteOnboardingDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(255)
+  workingPlace?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  workLocation?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(50)
   height?: string;
 

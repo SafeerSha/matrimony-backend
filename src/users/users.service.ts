@@ -36,14 +36,14 @@ export class UsersService implements OnModuleInit {
     const usersWithProfileId = await this.prisma.user.findMany({
       where: {
         profileId: {
-          startsWith: 'LT-',
+          startsWith: 'IMC-',
         },
       },
       select: { profileId: true },
     });
 
     let maxSequence = 0;
-    const regex = /^LT-([A-Z])(\d{5})$/;
+    const regex = /^(?:IMC|LT)-([A-Z])(\d{5})$/i;
 
     for (const u of usersWithProfileId) {
       if (!u.profileId) continue;
@@ -66,7 +66,7 @@ export class UsersService implements OnModuleInit {
       const letterIndex = Math.floor(adjusted / 99999);
       const num = (adjusted % 99999) + 1;
       const letter = String.fromCharCode(65 + Math.min(letterIndex, 25));
-      return `LT-${letter}${num.toString().padStart(5, '0')}`;
+      return `IMC-${letter}${num.toString().padStart(5, '0')}`;
     };
 
     let profileId = formatProfileId(nextSequence);

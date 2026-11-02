@@ -73,6 +73,7 @@ model Profile {
   occupation       String?
   employmentStatus String?
   annualIncome     String?
+  workingPlace     String?
   height           String?
   maritalStatus    String?
   city             String?
