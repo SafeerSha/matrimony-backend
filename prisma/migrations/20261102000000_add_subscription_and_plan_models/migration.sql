@@ -2,6 +2,7 @@
 ALTER TABLE "User" ADD COLUMN     "deactivatedAt" TIMESTAMP(3),
 ADD COLUMN     "deletedAt" TIMESTAMP(3),
 ADD COLUMN     "deletionReason" TEXT,
+ADD COLUMN     "lastActiveAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 ADD COLUMN     "subscriptionTier" TEXT NOT NULL DEFAULT 'BASIC';
 
 -- CreateTable
