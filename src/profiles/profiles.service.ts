@@ -42,10 +42,14 @@ export function formatPreferencesObject(profilePrefs: any, tablePref: any) {
   const p = profilePrefs || {};
   const t = tablePref || {};
 
-  const minAge = p.minAge !== undefined ? Number(p.minAge) : (t.minAge !== null && t.minAge !== undefined ? Number(t.minAge) : null);
-  const maxAge = p.maxAge !== undefined ? Number(p.maxAge) : (t.maxAge !== null && t.maxAge !== undefined ? Number(t.maxAge) : null);
-  const minHeight = p.minHeight !== undefined ? String(p.minHeight) : (t.minHeight !== null && t.minHeight !== undefined ? String(t.minHeight) : null);
-  const maxHeight = p.maxHeight !== undefined ? String(p.maxHeight) : (t.maxHeight !== null && t.maxHeight !== undefined ? String(t.maxHeight) : null);
+  const rawMinAge = p.minAge !== undefined && p.minAge !== null ? Number(p.minAge) : (t.minAge !== null && t.minAge !== undefined ? Number(t.minAge) : null);
+  const minAge = rawMinAge && rawMinAge >= 18 ? rawMinAge : 21;
+  const rawMaxAge = p.maxAge !== undefined && p.maxAge !== null ? Number(p.maxAge) : (t.maxAge !== null && t.maxAge !== undefined ? Number(t.maxAge) : null);
+  const maxAge = rawMaxAge && rawMaxAge >= minAge ? rawMaxAge : Math.max(minAge + 7, 35);
+  const rawMinHeight = p.minHeight !== undefined && p.minHeight !== null ? String(p.minHeight) : (t.minHeight !== null && t.minHeight !== undefined ? String(t.minHeight) : null);
+  const minHeight = rawMinHeight && rawMinHeight !== 'null' && rawMinHeight !== 'undefined' ? rawMinHeight : "4'10\"";
+  const rawMaxHeight = p.maxHeight !== undefined && p.maxHeight !== null ? String(p.maxHeight) : (t.maxHeight !== null && t.maxHeight !== undefined ? String(t.maxHeight) : null);
+  const maxHeight = rawMaxHeight && rawMaxHeight !== 'null' && rawMaxHeight !== 'undefined' ? rawMaxHeight : "6'4\"";
 
   const maritalStatus = parseStringOrArray(p.maritalStatus || p.maritalStatuses || t.maritalStatuses);
   const religions = parseStringOrArray(p.religions || p.religion || t.religions);
@@ -316,6 +320,17 @@ export class ProfilesService {
         connectionStatus = 'MATCHED';
         isMatched = true;
         isInterestSent = true;
+      }
+
+      const viewerProfile = await this.prisma.profile.findUnique({
+        where: { userId: viewerId },
+        select: { preferences: true },
+      });
+      const viewerFavorites: string[] = Array.isArray((viewerProfile?.preferences as any)?.favoriteIds)
+        ? (viewerProfile?.preferences as any).favoriteIds
+        : [];
+      if (viewerFavorites.includes(profile.userId)) {
+        isShortlisted = true;
       }
     }
 

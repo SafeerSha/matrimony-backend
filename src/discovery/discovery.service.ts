@@ -141,6 +141,41 @@ export class DiscoveryService {
       });
     }
 
+    // Marriage Sub-Category / Community Filter (Kerala, Telugu, Bharat)
+    const rawCommunity = (query.community || query.subCategory || '').trim();
+    if (rawCommunity && !isAllCategories && rawCategory.toLowerCase().includes('marr')) {
+      const commLower = rawCommunity.toLowerCase();
+      if (commLower.includes('kerala')) {
+        profileConditions.push({
+          OR: [
+            { community: { contains: 'Kerala', mode: 'insensitive' } },
+            { state: { contains: 'Kerala', mode: 'insensitive' } },
+            { motherTongue: { contains: 'Malayalam', mode: 'insensitive' } },
+            { city: { in: ['Kochi', 'Thrissur', 'Calicut', 'Kottayam', 'Trivandrum', 'Palakkad', 'Kozhikode', 'Ernakulam', 'Kannur', 'Alappuzha', 'Kollam'], mode: 'insensitive' } },
+          ],
+        });
+      } else if (commLower.includes('telugu')) {
+        profileConditions.push({
+          OR: [
+            { community: { contains: 'Telugu', mode: 'insensitive' } },
+            { state: { contains: 'Andhra', mode: 'insensitive' } },
+            { state: { contains: 'Telangana', mode: 'insensitive' } },
+            { motherTongue: { contains: 'Telugu', mode: 'insensitive' } },
+            { city: { in: ['Hyderabad', 'Visakhapatnam', 'Vijayawada', 'Guntur', 'Warangal', 'Tirupati'], mode: 'insensitive' } },
+          ],
+        });
+      } else if (commLower.includes('bharat')) {
+        profileConditions.push({
+          OR: [
+            { community: { contains: 'Bharat', mode: 'insensitive' } },
+            { country: { contains: 'India', mode: 'insensitive' } },
+            { community: null },
+            { community: '' },
+          ],
+        });
+      }
+    }
+
     // Dynamic Matchmaking Filter:
     // If the active category is Friendship (or user registered for friendship and viewing All), show ALL genders by default.
     // If active category is Marriage or Living Together, enforce opposite gender by default.
@@ -272,6 +307,12 @@ export class DiscoveryService {
         : Promise.resolve(null),
     ]);
 
+    const userFavorites = new Set(
+      Array.isArray((currentUser?.profile?.preferences as any)?.favoriteIds)
+        ? (currentUser?.profile?.preferences as any).favoriteIds
+        : []
+    );
+
     const sanitizedUsers = users.map((user) => {
       const { passwordHash, receivedConnections, sentConnections, ...rest } = user as any;
 
@@ -325,7 +366,7 @@ export class DiscoveryService {
         isInterestSent: connectionStatus === 'SENT' || connectionStatus === 'MATCHED',
         isInterestReceived: connectionStatus === 'RECEIVED',
         isMatched: connectionStatus === 'MATCHED',
-        isShortlisted: connectionStatus === 'SHORTLISTED',
+        isShortlisted: connectionStatus === 'SHORTLISTED' || userFavorites.has(user.id),
         isPassed: connectionStatus === 'REJECTED',
       };
     });

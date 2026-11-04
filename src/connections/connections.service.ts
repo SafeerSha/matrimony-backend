@@ -147,6 +147,10 @@ export class ConnectionsService {
         throw new BadRequestException('This interest request was declined');
       }
 
+      // If existing connection was SHORTLISTED by caller, persist in favoriteIds before updating status
+      if (existing.status === 'SHORTLISTED' && existing.senderId === senderId) {
+        await this.addFavoriteId(senderId, receiverId);
+      }
       // If existing connection was SHORTLISTED, promote it to PENDING interest!
       const updated = await this.prisma.connection.update({
         where: { id: existing.id },
@@ -300,16 +304,85 @@ export class ConnectionsService {
     });
   }
 
+  private async addFavoriteId(userId: string, targetId: string) {
+    try {
+      const profile = await this.prisma.profile.findUnique({
+        where: { userId },
+        select: { preferences: true },
+      });
+      const prefs = (profile?.preferences as any) || {};
+      const favorites: string[] = Array.isArray(prefs.favoriteIds) ? prefs.favoriteIds : [];
+      if (!favorites.includes(targetId)) {
+        await this.prisma.profile.update({
+          where: { userId },
+          data: {
+            preferences: {
+              ...prefs,
+              favoriteIds: [...favorites, targetId],
+            },
+          },
+        });
+      }
+    } catch (err) {
+      // Fallback silently if preferences update fails
+    }
+  }
+
+  private async removeFavoriteId(userId: string, targetId: string) {
+    try {
+      const profile = await this.prisma.profile.findUnique({
+        where: { userId },
+        select: { preferences: true },
+      });
+      const prefs = (profile?.preferences as any) || {};
+      const favorites: string[] = Array.isArray(prefs.favoriteIds) ? prefs.favoriteIds : [];
+      if (favorites.includes(targetId)) {
+        await this.prisma.profile.update({
+          where: { userId },
+          data: {
+            preferences: {
+              ...prefs,
+              favoriteIds: favorites.filter((id) => id !== targetId),
+            },
+          },
+        });
+      }
+    } catch (err) {
+      // Fallback silently
+    }
+  }
+
+  private async getFavoriteIds(userId: string): Promise<string[]> {
+    try {
+      const profile = await this.prisma.profile.findUnique({
+        where: { userId },
+        select: { preferences: true },
+      });
+      const prefs = (profile?.preferences as any) || {};
+      return Array.isArray(prefs.favoriteIds) ? prefs.favoriteIds : [];
+    } catch {
+      return [];
+    }
+  }
   async shortlistProfile(userId: string, rawTargetId: string) {
     const targetId = await this.resolveUserId(rawTargetId);
     if (userId === targetId) {
       throw new BadRequestException('Cannot shortlist yourself');
     }
 
-    const targetUser = await this.prisma.user.findUnique({ where: { id: targetId } });
+    const targetUser = await this.prisma.user.findUnique({
+      where: { id: targetId },
+      include: {
+        profile: true,
+        photos: { select: { url: true, isPrimary: true, isVerified: true } },
+      },
+    });
     if (!targetUser) {
       throw new NotFoundException('User not found');
     }
+
+    // Always persist targetId in user's favoriteIds list
+    await this.addFavoriteId(userId, targetId);
 
     const existing = await this.prisma.connection.findFirst({
       where: {
@@ -325,13 +398,30 @@ export class ConnectionsService {
         throw new BadRequestException('Cannot favorite a declined profile');
       }
 
-      // If already connected/accepted or interest pending, keep that primary connection status!
+      // If already connected/accepted or interest pending, preserve that primary connection status
+      // while ensuring the profile is favorited
       if (existing.status === 'ACCEPTED' || existing.status === 'PENDING') {
-        return existing;
+        return {
+          ...existing,
+          isShortlisted: true,
+          partner: targetUser,
+        };
       }
       return this.prisma.connection.update({
         where: { id: existing.id },
-        data: { status: 'SHORTLISTED' },
+        data: { status: 'SHORTLISTED', senderId: userId, receiverId: targetId },
+        include: {
+          receiver: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              profileId: true,
+              profile: true,
+              photos: { select: { url: true, isPrimary: true, isVerified: true } },
+            },
+          },
+        },
       });
     }
 
@@ -362,6 +452,10 @@ export class ConnectionsService {
       throw new BadRequestException('Cannot remove yourself');
     }
 
+    // Always remove from favoriteIds
+    await this.removeFavoriteId(userId, targetId);
+
+    // Only delete the connection record if its status was SHORTLISTED
     const existing = await this.prisma.connection.findFirst({
       where: {
         senderId: userId,
@@ -370,18 +464,15 @@ export class ConnectionsService {
       },
     });
 
-    if (!existing) {
-      throw new NotFoundException('Shortlisted profile not found');
+    if (existing) {
+      await this.prisma.connection.delete({
+        where: { id: existing.id },
+      });
     }
-
-    await this.prisma.connection.delete({
-      where: { id: existing.id },
-    });
 
     return {
       success: true,
       message: 'Profile removed from shortlist',
-      id: existing.id,
       targetId,
     };
   }
@@ -453,10 +544,57 @@ export class ConnectionsService {
           include: { receiver: { select: userSelect } },
           orderBy: { updatedAt: 'desc' },
         });
-        connections = shortlists.map((s: any) => ({
+        const listFromConnections = shortlists.map((s: any) => ({
           ...s,
           partner: s.receiver,
+          isShortlisted: true,
         }));
+        const existingPartnerIds = new Set(listFromConnections.map((c: any) => c.partner?.id).filter(Boolean));
+
+        const favoriteIds = await this.getFavoriteIds(userId);
+        const remainingFavoriteIds = favoriteIds.filter((id) => !existingPartnerIds.has(id));
+
+        if (remainingFavoriteIds.length > 0) {
+          const favoriteUsers = await this.prisma.user.findMany({
+            where: { id: { in: remainingFavoriteIds } },
+            select: userSelect,
+          });
+
+          const favoriteConnections = await this.prisma.connection.findMany({
+            where: {
+              OR: [
+                { senderId: userId, receiverId: { in: remainingFavoriteIds } },
+                { senderId: { in: remainingFavoriteIds }, receiverId: userId },
+              ],
+            },
+          });
+
+          const connMap = new Map<string, any>();
+          favoriteConnections.forEach((conn) => {
+            const otherId = conn.senderId === userId ? conn.receiverId : conn.senderId;
+            connMap.set(otherId, conn);
+          });
+
+          const listFromFavorites = favoriteUsers.map((u) => {
+            const conn = connMap.get(u.id);
+            return {
+              id: conn?.id || `fav-${u.id}`,
+              senderId: userId,
+              receiverId: u.id,
+              status: conn?.status || 'SHORTLISTED',
+              createdAt: conn?.createdAt || new Date(),
+              updatedAt: conn?.updatedAt || new Date(),
+              partner: u,
+              isInterestSent: conn?.senderId === userId && (conn?.status === 'PENDING' || conn?.status === 'ACCEPTED'),
+              isMatched: conn?.status === 'ACCEPTED',
+              isShortlisted: true,
+            };
+          });
+
+          connections = [...listFromConnections, ...listFromFavorites];
+        } else {
+          connections = listFromConnections;
+        }
         break;
       }
 

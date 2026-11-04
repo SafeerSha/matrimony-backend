@@ -83,6 +83,14 @@ export class SearchQueryDto {
 
   @IsOptional()
   @IsString()
+  community?: string;
+
+  @IsOptional()
+  @IsString()
+  subCategory?: string;
+
+  @IsOptional()
+  @IsString()
   intent?: string;
 
   @IsOptional()
