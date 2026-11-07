@@ -5,7 +5,15 @@ import cookieParser from 'cookie-parser';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 
-async function bootstrap() {
+async function bootstrap(){
+
+  console.log('Environment diagnostics:', {
+    nodeEnv: process.env.NODE_ENV,
+    jwtAccessSecretAvailable: !!process.env.JWT_ACCESS_SECRET,
+    jwtRefreshSecretAvailable: !!process.env.JWT_REFRESH_SECRET,
+    databaseUrlAvailable: !!process.env.DATABASE_URL,
+  });
+
   const app = await NestFactory.create(AppModule);
   const expressApp = app.getHttpAdapter().getInstance();
   expressApp.set('trust proxy', true);
