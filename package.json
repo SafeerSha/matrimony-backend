@@ -4,7 +4,7 @@
   "private": true,
   "description": "Production-ready foundation for a Matrimony application backend",
   "scripts": {
-    "build": "prisma generate && nest build",
+    "build": "prisma generate && tsc -p tsconfig.json",
     "postinstall": "prisma generate",
     "start": "nest start",
     "start:dev": "nest start --watch",
@@ -58,6 +58,9 @@
     "sharp": "^0.35.5",
     "socket.io": "^4.8.4",
     "swagger-ui-express": "^5.0.1"
+  },
+  "overrides": {
+    "magic-string": "^0.25.7"
   },
   "devDependencies": {
     "@nestjs/cli": "^12.0.0",
