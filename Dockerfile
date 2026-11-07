@@ -4,13 +4,16 @@
 FROM node:22-alpine AS dependencies
 WORKDIR /app
 
+# Ensure devDependencies (tsc) are installed even if Coolify sets NODE_ENV=production
+ENV NODE_ENV=development
+
 # Install native compilation dependencies for Argon2 and OpenSSL for Prisma on Alpine
 RUN apk add --no-cache libc6-compat openssl python3 make g++
 
 COPY package*.json ./
 COPY prisma ./prisma/
 
-RUN npm ci --legacy-peer-deps
+RUN npm ci --legacy-peer-deps --include=dev
 RUN npx prisma generate
 
 # ==========================================
@@ -18,6 +21,8 @@ RUN npx prisma generate
 # ==========================================
 FROM node:22-alpine AS builder
 WORKDIR /app
+
+ENV NODE_ENV=development
 
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
