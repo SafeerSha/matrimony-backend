@@ -4,8 +4,8 @@ const argon2 = require('argon2');
 const prisma = new PrismaClient();
 
 async function main() {
-  const adminEmail = process.env.ADMIN_SEED_EMAIL || 'admin@matrimony.com';
-  const adminPassword = process.env.ADMIN_SEED_PASSWORD || 'Admin@123456';
+  const adminEmail = process.env.ADMIN_SEED_EMAIL || 'admin@ishtamchat.com';
+  const adminPassword = process.env.ADMIN_SEED_PASSWORD || 'admin@7039';
 
   console.log(`Hashing admin password for ${adminEmail}...`);
   const passwordHash = await argon2.hash(adminPassword);
