@@ -16,9 +16,6 @@ export class MailService {
     const pass = this.configService.get<string>('SMTP_PASS')?.trim();
 
     if (!user || !pass) {
-      this.logger.warn(
-        'Gmail SMTP credentials (SMTP_USER / SMTP_PASS) not configured. Email OTPs will run in simulated development mode.',
-      );
       return;
     }
 
@@ -26,40 +23,118 @@ export class MailService {
     const port = Number(this.configService.get<number>('SMTP_PORT')) || 465;
     const secure = this.configService.get<string>('SMTP_SECURE') !== 'false';
 
-    this.transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure,
-      auth: {
-        user,
-        pass,
-      },
-    });
-
-    this.logger.log(`Gmail SMTP transporter initialized for account: ${user} (${host}:${port})`);
+    try {
+      this.transporter = nodemailer.createTransport({
+        host,
+        port,
+        secure,
+        auth: {
+          user,
+          pass,
+        },
+      });
+      this.logger.log(`SMTP transporter initialized for account: ${user} (${host}:${port})`);
+    } catch (err: any) {
+      this.logger.error(`Failed to initialize SMTP transporter: ${err.message}`);
+    }
   }
 
-  isConfigured(): boolean {
+  isMsg91Configured(): boolean {
+    const authKey = this.configService.get<string>('MSG91_AUTH_KEY')?.trim();
+    const templateId = this.configService.get<string>('MSG91_EMAIL_TEMPLATE_ID')?.trim();
+    return Boolean(authKey && templateId);
+  }
+
+  isSmtpConfigured(): boolean {
     const user = this.configService.get<string>('SMTP_USER')?.trim();
     const pass = this.configService.get<string>('SMTP_PASS')?.trim();
     return Boolean(user && pass);
   }
 
-  async sendOtpEmail(to: string, otp: string, purpose?: string): Promise<boolean> {
-    const normalizedTo = (to || '').trim().toLowerCase();
-    if (!normalizedTo) return false;
+  isConfigured(): boolean {
+    return this.isMsg91Configured() || this.isSmtpConfigured();
+  }
 
-    if (!this.transporter || !this.isConfigured()) {
-      this.logger.log(
-        `[SIMULATED-EMAIL] OTP to ${normalizedTo}: ${otp} (purpose: ${purpose || 'general'})`,
-      );
+  private maskEmail(email: string): string {
+    const parts = (email || '').split('@');
+    if (parts.length !== 2) return '***';
+    const [local, domain] = parts;
+    const maskedLocal = local.length > 2 ? `${local[0]}***${local[local.length - 1]}` : `${local[0]}***`;
+    return `${maskedLocal}@${domain}`;
+  }
+
+  /**
+   * Sends OTP email via MSG91 Email API (v5)
+   * Endpoint: POST https://control.msg91.com/api/v5/email/send
+   */
+  async sendViaMsg91(to: string, otp: string, purpose?: string): Promise<boolean> {
+    const authKey = this.configService.get<string>('MSG91_AUTH_KEY')?.trim();
+    const templateId = this.configService.get<string>('MSG91_EMAIL_TEMPLATE_ID')?.trim();
+    const fromEmail =
+      this.configService.get<string>('MSG91_EMAIL_FROM')?.trim() || 'no-reply@ishtamchat.com';
+    const domain = this.configService.get<string>('MSG91_EMAIL_DOMAIN')?.trim() || 'ishtamchat.com';
+    const masked = this.maskEmail(to);
+
+    const payload = {
+      recipients: [
+        {
+          to: [
+            {
+              email: to,
+              name: to.split('@')[0],
+            },
+          ],
+          variables: {
+            OTP: otp,
+            otp: otp,
+            purpose: purpose || 'verification',
+          },
+        },
+      ],
+      from: {
+        email: fromEmail,
+        name: 'Ishtam Chat',
+      },
+      domain,
+      template_id: templateId,
+    };
+
+    try {
+      const response = await fetch('https://control.msg91.com/api/v5/email/send', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          authkey: authKey!,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const responseData = (await response.json().catch(() => null)) as any;
+
+      if (!response.ok || (responseData && responseData.status === 'error')) {
+        this.logger.error(
+          `[MSG91-EMAIL] Failed to send email to ${masked}: ${JSON.stringify(responseData || response.statusText)}`,
+        );
+        return false;
+      }
+
+      this.logger.log(`[MSG91-EMAIL] Verification email sent successfully to ${masked}`);
       return true;
+    } catch (error: any) {
+      this.logger.error(`[MSG91-EMAIL] Error sending email to ${masked}: ${error.message}`);
+      return false;
     }
+  }
+
+  /**
+   * Sends OTP email via Nodemailer SMTP fallback
+   */
+  async sendViaSmtp(to: string, otp: string, purpose?: string): Promise<boolean> {
+    if (!this.transporter) return false;
 
     const smtpUser = this.configService.get<string>('SMTP_USER')?.trim();
     const fromAddress =
-      this.configService.get<string>('EMAIL_FROM')?.trim() ||
-      `"Ishtam Chat" <${smtpUser}>`;
+      this.configService.get<string>('EMAIL_FROM')?.trim() || `"Ishtam Chat" <${smtpUser}>`;
 
     let subject = 'Your Ishtam Chat Verification Code';
     let heading = 'Your Verification Code';
@@ -145,17 +220,41 @@ export class MailService {
     try {
       const info = await this.transporter.sendMail({
         from: fromAddress,
-        to: normalizedTo,
+        to,
         subject,
         html,
         text: `${heading}\n\nYour 6-digit verification code is: ${otp}\n\nThis code is valid for 10 minutes. Never share this code with anyone.`,
       });
 
-      this.logger.log(`[MAIL-SERVICE] OTP email sent successfully to ${normalizedTo} (MessageId: ${info.messageId})`);
+      this.logger.log(`[MAIL-SERVICE] OTP email sent successfully to ${this.maskEmail(to)} (MessageId: ${info.messageId})`);
       return true;
     } catch (error: any) {
-      this.logger.error(`[MAIL-SERVICE] Failed to send email to ${normalizedTo}: ${error.message}`, error.stack);
+      this.logger.error(`[MAIL-SERVICE] Failed to send email to ${this.maskEmail(to)}: ${error.message}`, error.stack);
       return false;
     }
+  }
+
+  /**
+   * Main entry point to send OTP verification email
+   */
+  async sendOtpEmail(to: string, otp: string, purpose?: string): Promise<boolean> {
+    const normalizedTo = (to || '').trim().toLowerCase();
+    if (!normalizedTo) return false;
+
+    // 1. Try MSG91 Email API if configured
+    if (this.isMsg91Configured()) {
+      return this.sendViaMsg91(normalizedTo, otp, purpose);
+    }
+
+    // 2. Try Nodemailer SMTP fallback if configured
+    if (this.isSmtpConfigured() && this.transporter) {
+      return this.sendViaSmtp(normalizedTo, otp, purpose);
+    }
+
+    // 3. Fallback to simulated development mode
+    this.logger.log(
+      `[SIMULATED-EMAIL] OTP to ${this.maskEmail(normalizedTo)}: ${otp} (purpose: ${purpose || 'general'})`,
+    );
+    return true;
   }
 }
