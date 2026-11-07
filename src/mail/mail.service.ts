@@ -41,7 +41,8 @@ export class MailService {
 
   isMsg91Configured(): boolean {
     const authKey = this.configService.get<string>('MSG91_AUTH_KEY')?.trim();
-    const templateId = this.configService.get<string>('MSG91_EMAIL_TEMPLATE_ID')?.trim();
+    const templateId =
+      this.configService.get<string>('MSG91_EMAIL_TEMPLATE_ID')?.trim() || 'global_otp';
     return Boolean(authKey && templateId);
   }
 
@@ -69,9 +70,10 @@ export class MailService {
    */
   async sendViaMsg91(to: string, otp: string, purpose?: string): Promise<boolean> {
     const authKey = this.configService.get<string>('MSG91_AUTH_KEY')?.trim();
-    const templateId = this.configService.get<string>('MSG91_EMAIL_TEMPLATE_ID')?.trim();
+    const templateId =
+      this.configService.get<string>('MSG91_EMAIL_TEMPLATE_ID')?.trim() || 'global_otp';
     const fromEmail =
-      this.configService.get<string>('MSG91_EMAIL_FROM')?.trim() || 'no-reply@ishtamchat.com';
+      this.configService.get<string>('MSG91_EMAIL_FROM')?.trim() || 'notifications@ishtamchat.com';
     const domain = this.configService.get<string>('MSG91_EMAIL_DOMAIN')?.trim() || 'ishtamchat.com';
     const masked = this.maskEmail(to);
 
