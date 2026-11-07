@@ -87,6 +87,10 @@ export class MailService {
           variables: {
             OTP: otp,
             otp: otp,
+            code: otp,
+            CODE: otp,
+            otp_code: otp,
+            verification_code: otp,
             purpose: purpose || 'verification',
           },
         },
