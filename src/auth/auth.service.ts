@@ -13,6 +13,7 @@ import * as argon2 from 'argon2';
 import * as crypto from 'crypto';
 import { UsersService } from '../users/users.service';
 import { MailService } from '../mail/mail.service';
+import { SmsService } from '../sms/sms.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -40,6 +41,7 @@ export class AuthService {
     private jwtService: JwtService,
     private configService: ConfigService,
     @Optional() private mailService?: MailService,
+    @Optional() private smsService?: SmsService,
   ) {}
 
   /**
@@ -413,13 +415,17 @@ export class AuthService {
       });
     }
 
-    // Generate OTP code (Live random 6-digit if Gmail SMTP configured, fallback to preview OTP for dev)
+    // Generate OTP code (Live random 6-digit if email SMTP or MSG91 SMS configured, fallback to preview OTP for dev)
     let otpCode = '123456';
     let isLiveEmail = false;
+    let isLiveSms = false;
 
     if (normalizedEmail && this.mailService?.isConfigured()) {
       otpCode = crypto.randomInt(100000, 1000000).toString();
       isLiveEmail = true;
+    } else if (normalizedPhone && this.smsService?.isConfigured()) {
+      otpCode = crypto.randomInt(100000, 1000000).toString();
+      isLiveSms = true;
     }
 
     const codeHash = crypto
@@ -449,15 +455,19 @@ export class AuthService {
       }
     }
     if (normalizedPhone) {
-      const maskedPhone = `${normalizedPhone.slice(0, 3)}****${normalizedPhone.slice(-4)}`;
-      console.log(`[SMS-SERVICE] Mobile OTP bypassed for ${maskedPhone}. Default OTP: ${otpCode}`);
+      if (isLiveSms) {
+        await this.smsService!.sendOtp(normalizedPhone, otpCode);
+      } else {
+        const maskedPhone = `${normalizedPhone.slice(0, 3)}****${normalizedPhone.slice(-4)}`;
+        console.log(`[SMS-SERVICE] Mobile OTP bypassed for ${maskedPhone}. Default OTP: ${otpCode}`);
+      }
     }
 
     return {
       message: normalizedEmail
         ? `Verification code sent successfully to ${normalizedEmail}`
         : 'Verification code sent successfully',
-      ...(isLiveEmail ? {} : { defaultOtp: '123456' }),
+      ...(isLiveEmail || isLiveSms ? {} : { defaultOtp: '123456' }),
     };
   }
 
