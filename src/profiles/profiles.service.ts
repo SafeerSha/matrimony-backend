@@ -200,13 +200,21 @@ export class ProfilesService {
   }
 
   async getPublicProfile(userId: string, viewerId?: string) {
+    const rawId = (userId || '').trim();
+    const imcNormalized = rawId.toUpperCase().startsWith('IMC-')
+      ? rawId.toUpperCase()
+      : `IMC-${rawId.toUpperCase()}`;
+
     const [profile, viewer] = await Promise.all([
       this.prisma.profile.findFirst({
         where: {
           OR: [
-            { id: userId },
-            { userId },
-            { user: { profileId: userId } },
+            { id: rawId },
+            { userId: rawId },
+            { user: { profileId: rawId } },
+            { user: { profileId: imcNormalized } },
+            { user: { profileId: { equals: rawId, mode: 'insensitive' } } },
+            { user: { profileId: { equals: imcNormalized, mode: 'insensitive' } } },
           ],
           user: { isBanned: false },
         },
