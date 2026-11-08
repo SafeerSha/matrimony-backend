@@ -70,7 +70,18 @@ export class NotificationsService {
       return null;
     }
 
-    const snippet = messageContent.length > 80 ? `${messageContent.substring(0, 77)}...` : messageContent;
+    let cleanMessage = messageContent;
+    if (typeof messageContent === 'string' && (messageContent.trim().startsWith('{"replyTo":') || messageContent.trim().startsWith('{"text":'))) {
+      try {
+        const parsed = JSON.parse(messageContent.trim());
+        if (parsed && typeof parsed.text === 'string') {
+          const replyName = parsed.replyTo?.name;
+          cleanMessage = replyName ? `Replied to ${replyName}: ${parsed.text}` : parsed.text;
+        }
+      } catch {}
+    }
+
+    const snippet = cleanMessage.length > 80 ? `${cleanMessage.substring(0, 77)}...` : cleanMessage;
     const content = `${senderName}: ${snippet}`;
 
     // Look for existing notification from this sender
