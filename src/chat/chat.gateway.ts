@@ -230,6 +230,23 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @SubscribeMessage('typing')
+  handleTyping(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: { receiverId: string; isTyping: boolean },
+  ) {
+    const senderId = client.data?.user?.sub;
+    if (!senderId || !payload?.receiverId) return;
+
+    const receiverSocketId = this.userSockets.get(payload.receiverId);
+    if (receiverSocketId) {
+      this.server.to(receiverSocketId).emit('user_typing', {
+        senderId,
+        isTyping: Boolean(payload.isTyping),
+      });
+    }
+  }
+
   private extractToken(client: Socket): string | null {
     // 1. client.handshake.auth.token
     const authToken = client.handshake?.auth?.token;
