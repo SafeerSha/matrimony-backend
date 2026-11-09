@@ -416,127 +416,162 @@ export class SubscriptionService {
   }
 
   async getUserSubscription(userId: string) {
-    const [sub, user] = await Promise.all([
-      this.prisma.subscription.findUnique({
-        where: { userId },
-      }),
-      this.prisma.user.findUnique({
-        where: { id: userId },
-        select: { id: true, subscriptionTier: true },
-      }),
-    ]);
+    try {
+      const [sub, user] = await Promise.all([
+        this.prisma.subscription.findUnique({
+          where: { userId },
+        }),
+        this.prisma.user.findUnique({
+          where: { id: userId },
+          select: { id: true, subscriptionTier: true },
+        }),
+      ]);
 
-    const now = new Date();
-    const isExpired = sub?.expiresAt ? new Date(sub.expiresAt) <= now : false;
+      const now = new Date();
+      const isExpired = sub?.expiresAt ? new Date(sub.expiresAt) <= now : false;
 
-    // Check if user has an active chat permit
-    // Supports both new Subscription table and legacy User.subscriptionTier
-    const isSubscribed = Boolean(
-      (sub && sub.status === 'ACTIVE' && sub.canChat && !isExpired) ||
-      (user?.subscriptionTier && ['PLUS', 'ELITE', 'PREMIUM'].includes(user.subscriptionTier.toUpperCase()))
-    );
+      // Check if user has an active chat permit
+      // Supports both new Subscription table and legacy User.subscriptionTier
+      const isSubscribed = Boolean(
+        (sub && sub.status === 'ACTIVE' && sub.canChat && !isExpired) ||
+        (user?.subscriptionTier && ['PLUS', 'ELITE', 'PREMIUM'].includes(user.subscriptionTier.toUpperCase()))
+      );
 
-    const rawTier = isSubscribed
-      ? (sub?.tier || user?.subscriptionTier || 'BASIC')
-      : 'FREE';
+      const rawTier = isSubscribed
+        ? (sub?.tier || user?.subscriptionTier || 'BASIC')
+        : 'FREE';
 
-    let activeTier = rawTier;
-    let tierName = rawTier;
+      let activeTier = rawTier;
+      let tierName = rawTier;
 
-    if (isSubscribed && rawTier !== 'FREE') {
-      const matchedPlan = await this.prisma.plan.findFirst({
-        where: {
-          OR: [
-            { id: rawTier },
-            { code: rawTier.toUpperCase() },
-          ],
-        },
-      });
+      if (isSubscribed && rawTier !== 'FREE') {
+        const matchedPlan = await this.prisma.plan.findFirst({
+          where: {
+            OR: [
+              { id: rawTier },
+              { code: rawTier.toUpperCase() },
+            ],
+          },
+        });
 
-      if (matchedPlan) {
-        activeTier = matchedPlan.code;
-        tierName = matchedPlan.name;
+        if (matchedPlan) {
+          activeTier = matchedPlan.code;
+          tierName = matchedPlan.name;
+        }
       }
+
+      const daysRemaining = sub?.expiresAt && !isExpired
+        ? Math.max(0, Math.ceil((new Date(sub.expiresAt).getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
+        : 0;
+
+      // Daily interest quota check
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const dailyLimit = isSubscribed ? (sub?.dailyInterestsLimit || 50) : 10;
+      let quotaRecord: any = null;
+      try {
+        quotaRecord = await this.prisma.userDailyQuota.findUnique({
+          where: {
+            userId_date: {
+              userId,
+              date: today,
+            },
+          },
+        });
+      } catch (quotaErr: any) {
+        this.logger.warn(`Could not read daily quota for ${userId}: ${quotaErr?.message}`);
+      }
+
+      const interestsSentToday = quotaRecord?.interestsSent || 0;
+      const dailyInterestsRemaining = Math.max(0, dailyLimit - interestsSentToday);
+
+      let unlockedContactsCount = 0;
+      try {
+        unlockedContactsCount = await this.prisma.contactUnlock.count({
+          where: { userId },
+        });
+      } catch (unlockErr: any) {
+        this.logger.warn(`Could not count unlocked contacts for ${userId}: ${unlockErr?.message}`);
+      }
+
+      const isUnlimitedInterests = dailyLimit >= 9000;
+      const isUnlimitedContacts = (sub?.contactCredits || 0) >= 9000;
+
+      return {
+        userId,
+        tier: activeTier,
+        tierName,
+        status: isSubscribed ? 'ACTIVE' : (isExpired ? 'EXPIRED' : 'INACTIVE'),
+        isSubscribed,
+        canChat: isSubscribed,
+        expiresAt: sub?.expiresAt || null,
+        daysRemaining,
+        contactCredits: sub?.contactCredits || 0,
+        unlockedContactsCount,
+        dailyInterestsLimit: dailyLimit,
+        dailyInterestsSentToday: interestsSentToday,
+        dailyInterestsRemaining,
+        usage: {
+          messaging: {
+            allowed: isSubscribed,
+            unlimited: isSubscribed,
+          },
+          interests: {
+            dailyLimit,
+            sentToday: interestsSentToday,
+            remainingToday: dailyInterestsRemaining,
+            isUnlimited: isUnlimitedInterests,
+          },
+          contacts: {
+            creditsRemaining: sub?.contactCredits || 0,
+            unlockedCount: unlockedContactsCount,
+            isUnlimited: isUnlimitedContacts,
+          },
+          visibility: {
+            level:
+              activeTier === 'ELITE'
+                ? 'Highest VIP Visibility'
+                : activeTier === 'PLUS'
+                ? 'High Visibility'
+                : activeTier === 'STANDARD'
+                ? 'Priority Visibility'
+                : 'Standard Profile Visibility',
+            boost:
+              activeTier === 'ELITE'
+                ? 30
+                : activeTier === 'PLUS'
+                ? 20
+                : activeTier === 'STANDARD'
+                ? 10
+                : 0,
+          },
+        },
+      };
+    } catch (err: any) {
+      this.logger.error(`Error calculating user subscription for ${userId}: ${err?.message}`, err?.stack);
+      return {
+        userId,
+        tier: 'FREE',
+        tierName: 'FREE',
+        status: 'INACTIVE',
+        isSubscribed: false,
+        canChat: false,
+        expiresAt: null,
+        daysRemaining: 0,
+        contactCredits: 0,
+        unlockedContactsCount: 0,
+        dailyInterestsLimit: 10,
+        dailyInterestsSentToday: 0,
+        dailyInterestsRemaining: 10,
+        usage: {
+          messaging: { allowed: false, unlimited: false },
+          interests: { dailyLimit: 10, sentToday: 0, remainingToday: 10, isUnlimited: false },
+          contacts: { creditsRemaining: 0, unlockedCount: 0, isUnlimited: false },
+          visibility: { level: 'Standard Profile Visibility', boost: 0 },
+        },
+      };
     }
-
-    const daysRemaining = sub?.expiresAt && !isExpired
-      ? Math.max(0, Math.ceil((new Date(sub.expiresAt).getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
-      : 0;
-
-    // Daily interest quota check
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const dailyLimit = isSubscribed ? (sub?.dailyInterestsLimit || 50) : 10;
-    const quotaRecord = await this.prisma.userDailyQuota.findUnique({
-      where: {
-        userId_date: {
-          userId,
-          date: today,
-        },
-      },
-    });
-
-    const interestsSentToday = quotaRecord?.interestsSent || 0;
-    const dailyInterestsRemaining = Math.max(0, dailyLimit - interestsSentToday);
-
-    const unlockedContactsCount = await this.prisma.contactUnlock.count({
-      where: { userId },
-    });
-
-    const isUnlimitedInterests = dailyLimit >= 9000;
-    const isUnlimitedContacts = (sub?.contactCredits || 0) >= 9000;
-
-    return {
-      userId,
-      tier: activeTier,
-      tierName,
-      status: isSubscribed ? 'ACTIVE' : (isExpired ? 'EXPIRED' : 'INACTIVE'),
-      isSubscribed,
-      canChat: isSubscribed,
-      expiresAt: sub?.expiresAt || null,
-      daysRemaining,
-      contactCredits: sub?.contactCredits || 0,
-      unlockedContactsCount,
-      dailyInterestsLimit: dailyLimit,
-      dailyInterestsSentToday: interestsSentToday,
-      dailyInterestsRemaining,
-      usage: {
-        messaging: {
-          allowed: isSubscribed,
-          unlimited: isSubscribed,
-        },
-        interests: {
-          dailyLimit,
-          sentToday: interestsSentToday,
-          remainingToday: dailyInterestsRemaining,
-          isUnlimited: isUnlimitedInterests,
-        },
-        contacts: {
-          creditsRemaining: sub?.contactCredits || 0,
-          unlockedCount: unlockedContactsCount,
-          isUnlimited: isUnlimitedContacts,
-        },
-        visibility: {
-          level:
-            activeTier === 'ELITE'
-              ? 'Highest VIP Visibility'
-              : activeTier === 'PLUS'
-              ? 'High Visibility'
-              : activeTier === 'STANDARD'
-              ? 'Priority Visibility'
-              : 'Standard Profile Visibility',
-          boost:
-            activeTier === 'ELITE'
-              ? 30
-              : activeTier === 'PLUS'
-              ? 20
-              : activeTier === 'STANDARD'
-              ? 10
-              : 0,
-        },
-      },
-    };
   }
 
   /**
