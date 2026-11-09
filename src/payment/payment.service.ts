@@ -107,14 +107,16 @@ export class PaymentService {
         .join(' ')
         .trim() || 'Valued Member';
 
-    const customerEmail = user.email || `user_${user.id.slice(0, 8)}@ishtammatrimony.com`;
+    const customerEmail = user.email || `user_${user.id.slice(0, 8)}@ishtamchat.com`;
     const rawPhone = (user.phone || '').replace(/[^0-9]/g, '');
     const customerPhone = rawPhone.length >= 10 ? rawPhone.slice(-10) : '9999999999';
 
     const frontendBaseUrl =
+      this.configService?.get<string>('FRONTEND_URL') ||
+      process.env.FRONTEND_URL ||
       this.configService?.get<string>('NEXT_PUBLIC_APP_URL') ||
       process.env.NEXT_PUBLIC_APP_URL ||
-      'https://ishtammatrimony.com';
+      'https://ishtamchat.com';
 
     // 5. If credentials are missing in local dev, return simulated checkout
     if (!appId || !secretKey) {
