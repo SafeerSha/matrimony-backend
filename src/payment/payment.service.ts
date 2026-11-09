@@ -4,6 +4,7 @@ import {
   BadRequestException,
   NotFoundException,
   UnauthorizedException,
+  ForbiddenException,
   Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -376,6 +377,21 @@ export class PaymentService {
         return { success: true, message: 'Drop event recorded' };
       }
 
+      case 'PAYMENT_PENDING_WEBHOOK':
+      case 'PAYMENT_PENDING': {
+        const orderId = eventData.order?.order_id;
+        this.logger.log(`Cashfree payment is pending confirmation for order ${orderId}`);
+        return { success: true, message: 'Pending status recorded' };
+      }
+
+      case 'REFUND_STATUS_WEBHOOK':
+      case 'PAYMENT_REFUND_WEBHOOK': {
+        const orderId = eventData.order?.order_id;
+        const refundAmount = eventData.refund?.refund_amount;
+        this.logger.warn(`Cashfree refund processed for order ${orderId}: amount ₹${refundAmount}`);
+        return { success: true, message: 'Refund event recorded' };
+      }
+
       default:
         this.logger.log(`Unhandled Cashfree event type: ${eventType}`);
         return { success: true, message: `Event ${eventType} acknowledged` };
@@ -388,6 +404,13 @@ export class PaymentService {
   async verifyOrderPayment(userId: string, orderId: string) {
     if (!orderId) {
       throw new BadRequestException('Order ID is required.');
+    }
+
+    // Security Check: Verify that the orderId belongs to this user (prevent IDOR)
+    const expectedUserPrefix = userId.replace(/-/g, '').slice(0, 8);
+    if (orderId.startsWith('ord_') && !orderId.startsWith(`ord_${expectedUserPrefix}_`)) {
+      this.logger.warn(`Unauthorized order verification attempt: User ${userId} tried to verify order ${orderId}`);
+      throw new ForbiddenException('You are not authorized to verify this payment order.');
     }
 
     const { appId, secretKey, baseUrl, apiVersion } = this.getCashfreeConfig();
@@ -458,10 +481,39 @@ export class PaymentService {
         };
       }
 
+      if (paymentList.length === 0) {
+        return {
+          orderId,
+          paymentStatus: 'USER_DROPPED',
+          message: 'Payment session was closed or not completed. No amount was debited.',
+        };
+      }
+
+      const latestPayment = paymentList[0];
+      const rawStatus = (latestPayment?.payment_status || latestPayment?.status || '').toUpperCase();
+
+      if (rawStatus === 'USER_DROPPED' || rawStatus === 'CANCELLED') {
+        return {
+          orderId,
+          paymentStatus: 'USER_DROPPED',
+          message: latestPayment?.payment_message || 'Payment was cancelled. No amount was debited.',
+        };
+      }
+
+      if (rawStatus === 'FAILED' || rawStatus === 'DECLINED') {
+        return {
+          orderId,
+          paymentStatus: 'FAILED',
+          message: latestPayment?.payment_message || 'Payment failed or was declined by the bank.',
+        };
+      }
+
       return {
         orderId,
-        paymentStatus: paymentList[0]?.payment_status || 'PENDING',
-        message: paymentList[0]?.payment_message || 'Payment is pending or incomplete.',
+        paymentStatus: 'PENDING',
+        message:
+          latestPayment?.payment_message ||
+          'Payment is being confirmed by your bank. Your permit will activate once confirmed.',
       };
     } catch (err: any) {
       if (err instanceof BadRequestException) throw err;
