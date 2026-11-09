@@ -100,6 +100,10 @@ export class PaymentService {
     // 3. Prepare unique Order ID (max 45 chars, alphanumeric + _ -)
     const orderId = `ord_${userId.replace(/-/g, '').slice(0, 8)}_${resolvedPlanCode}_${Date.now()}`.slice(0, 45);
 
+    this.logger.log(
+      `[PaymentService] Initiating order: orderId=${orderId}, userId=${userId}, plan=${resolvedPlanCode}, price=₹${plan.price}, gatewayEnv=${env}`,
+    );
+
     // 4. Sanitize customer details for Cashfree
     const customerId = `cust_${user.id.replace(/-/g, '').slice(0, 30)}`;
     const customerName =
@@ -177,11 +181,17 @@ export class PaymentService {
       const data = await response.json();
 
       if (!response.ok) {
-        this.logger.error(`Cashfree create order error: ${JSON.stringify(data)}`);
+        this.logger.error(
+          `[PaymentService] Cashfree create order failed for orderId=${orderId}, status=${response.status}: ${JSON.stringify(data)}`,
+        );
         throw new BadRequestException(
           data?.message || 'Failed to initialize payment order with payment gateway.',
         );
       }
+
+      this.logger.log(
+        `[PaymentService] Cashfree order created successfully: orderId=${data.order_id}, cfOrderId=${data.cf_order_id}, status=${data.order_status}`,
+      );
 
       return {
         cfOrderId: data.cf_order_id,
@@ -208,7 +218,7 @@ export class PaymentService {
     rawBody: Buffer | string,
   ): boolean {
     if (!signature || !timestamp) {
-      this.logger.warn('Webhook signature verification failed: Missing signature or timestamp header');
+      this.logger.warn('[PaymentService] Webhook signature verification failed: Missing signature or timestamp header');
       return false;
     }
 
@@ -217,10 +227,10 @@ export class PaymentService {
     // If secret key is not configured in local development, skip only in non-production
     if (!secretKey) {
       if (process.env.NODE_ENV !== 'production') {
-        this.logger.warn('CASHFREE_SECRET_KEY is empty in development. Allowing webhook for local testing.');
+        this.logger.warn('[PaymentService] CASHFREE_SECRET_KEY is empty in development. Allowing webhook for local testing.');
         return true;
       }
-      this.logger.error('CASHFREE_SECRET_KEY is not configured in production.');
+      this.logger.error('[PaymentService] CASHFREE_SECRET_KEY is not configured in production.');
       return false;
     }
 
@@ -230,7 +240,7 @@ export class PaymentService {
       const timestampMs = tsNumber > 9999999999 ? tsNumber : tsNumber * 1000;
       const ageMs = Math.abs(Date.now() - timestampMs);
       if (ageMs > 10 * 60 * 1000) {
-        this.logger.warn(`Webhook timestamp expired or out of window: ${timestamp} (age: ${ageMs}ms)`);
+        this.logger.warn(`[PaymentService] Webhook timestamp expired or out of window: ${timestamp} (age: ${ageMs}ms, tolerance: 10m)`);
         return false;
       }
     }
@@ -248,17 +258,19 @@ export class PaymentService {
       const expectedBuf = Buffer.from(expectedSignature, 'base64');
 
       if (receivedBuf.length !== expectedBuf.length) {
-        this.logger.warn('Webhook signature length mismatch.');
+        this.logger.warn('[PaymentService] Webhook signature length mismatch.');
         return false;
       }
 
       const isValid = crypto.timingSafeEqual(receivedBuf, expectedBuf);
       if (!isValid) {
-        this.logger.warn('Webhook signature cryptographic mismatch.');
+        this.logger.warn('[PaymentService] Webhook signature cryptographic mismatch.');
+      } else {
+        this.logger.log('[PaymentService] Webhook signature cryptographically verified successfully.');
       }
       return isValid;
     } catch (err: any) {
-      this.logger.error(`Error computing webhook signature: ${err?.message}`);
+      this.logger.error(`[PaymentService] Error computing webhook signature: ${err?.message}`);
       return false;
     }
   }
@@ -271,7 +283,9 @@ export class PaymentService {
     const eventType = payload?.type;
     const eventData = payload?.data || {};
 
-    this.logger.log(`Processing verified Cashfree webhook event: ${eventType}`);
+    this.logger.log(
+      `[PaymentService] Processing verified Cashfree webhook event: ${eventType}, orderId=${eventData.order?.order_id || 'N/A'}, paymentId=${eventData.payment?.cf_payment_id || 'N/A'}`,
+    );
 
     // Handle dashboard test ping from Cashfree Dashboard
     const isTestPing =
@@ -281,7 +295,7 @@ export class PaymentService {
       eventType === 'WEBHOOK_TEST';
 
     if (isTestPing) {
-      this.logger.log('Cashfree dashboard test ping received and verified successfully.');
+      this.logger.log('[PaymentService] Cashfree dashboard test ping received and verified successfully.');
       return { success: true, message: 'Test webhook verified successfully' };
     }
 
@@ -294,7 +308,7 @@ export class PaymentService {
 
         const paymentStatus = payment.payment_status || order.order_status;
         if (paymentStatus !== 'SUCCESS') {
-          this.logger.warn(`Webhook indicated non-SUCCESS status: ${paymentStatus}`);
+          this.logger.warn(`[PaymentService] Webhook indicated non-SUCCESS status: ${paymentStatus}`);
           return { success: true, message: `Ignored status ${paymentStatus}` };
         }
 
@@ -409,15 +423,18 @@ export class PaymentService {
     // Security Check: Verify that the orderId belongs to this user (prevent IDOR)
     const expectedUserPrefix = userId.replace(/-/g, '').slice(0, 8);
     if (orderId.startsWith('ord_') && !orderId.startsWith(`ord_${expectedUserPrefix}_`)) {
-      this.logger.warn(`Unauthorized order verification attempt: User ${userId} tried to verify order ${orderId}`);
+      this.logger.warn(`[PaymentService] IDOR Security Alert: User ${userId} tried to verify unauthorized order ${orderId}`);
       throw new ForbiddenException('You are not authorized to verify this payment order.');
     }
+
+    this.logger.log(`[PaymentService] Verifying order payment: orderId=${orderId}, userId=${userId}`);
 
     const { appId, secretKey, baseUrl, apiVersion } = this.getCashfreeConfig();
 
     if (!appId || !secretKey) {
       // In dev fallback
       const sub = await this.subscriptionService.getUserSubscription(userId);
+      this.logger.warn(`[PaymentService] Dev credentials missing. Returning local fallback for order ${orderId}`);
       return {
         orderId,
         paymentStatus: sub.isSubscribed ? 'SUCCESS' : 'PENDING',
@@ -438,7 +455,7 @@ export class PaymentService {
       const payments = await response.json();
 
       if (!response.ok) {
-        this.logger.error(`Error querying Cashfree payments for order ${orderId}: ${JSON.stringify(payments)}`);
+        this.logger.error(`[PaymentService] Error querying Cashfree payments for order ${orderId}: ${JSON.stringify(payments)}`);
         throw new BadRequestException('Could not verify payment status with payment gateway.');
       }
 
@@ -446,6 +463,10 @@ export class PaymentService {
       const paymentList = Array.isArray(payments) ? payments : [];
       const successfulPayment = paymentList.find(
         (p: any) => (p.payment_status || p.status) === 'SUCCESS',
+      );
+
+      this.logger.log(
+        `[PaymentService] Cashfree query for order ${orderId}: ${paymentList.length} payment attempt(s) found. HasSuccess=${Boolean(successfulPayment)}`,
       );
 
       if (successfulPayment) {
@@ -473,6 +494,9 @@ export class PaymentService {
         }
 
         const updatedSub = await this.subscriptionService.getUserSubscription(userId);
+        this.logger.log(
+          `[PaymentService] Order ${orderId} verified as SUCCESS. Payment: ${cfPaymentId}, Amount: ₹${amount}, User: ${userId}`,
+        );
         return {
           orderId,
           paymentStatus: 'SUCCESS',
@@ -482,6 +506,7 @@ export class PaymentService {
       }
 
       if (paymentList.length === 0) {
+        this.logger.log(`[PaymentService] Order ${orderId} verified: No payment attempt recorded (USER_DROPPED)`);
         return {
           orderId,
           paymentStatus: 'USER_DROPPED',
@@ -491,6 +516,10 @@ export class PaymentService {
 
       const latestPayment = paymentList[0];
       const rawStatus = (latestPayment?.payment_status || latestPayment?.status || '').toUpperCase();
+
+      this.logger.log(
+        `[PaymentService] Order ${orderId} resolved status: ${rawStatus || 'PENDING'} for user ${userId}. Message: ${latestPayment?.payment_message || 'N/A'}`,
+      );
 
       if (rawStatus === 'USER_DROPPED' || rawStatus === 'CANCELLED') {
         return {

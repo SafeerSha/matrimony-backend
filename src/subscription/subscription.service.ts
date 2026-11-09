@@ -640,6 +640,10 @@ export class SubscriptionService {
 
     const planCode = (plan as any).code || plan.id;
 
+    this.logger.log(
+      `[SubscriptionService] activatePermit requested: user=${userId}, plan=${normalizedTier}, source=${isAdminGrant ? 'ADMIN' : paymentDetails?.paymentId ? 'GATEWAY' : 'MANUAL_ACTIVATION'}, paymentId=${paymentDetails?.paymentId || 'NONE'}, amount=₹${paymentDetails?.amount || plan.price}`,
+    );
+
     // Execute atomic transaction to prevent concurrent dual-activation race condition
     return this.prisma.$transaction(async (tx) => {
       const existing = await tx.subscription.findUnique({
@@ -654,7 +658,7 @@ export class SubscriptionService {
         existing?.status === 'ACTIVE'
       ) {
         this.logger.log(
-          `Payment ${paymentDetails.paymentId} was already activated concurrently for user ${userId}. Idempotent exit.`,
+          `[SubscriptionService] Idempotency trigger: Payment ${paymentDetails.paymentId} was already activated for user ${userId}. Idempotent exit.`,
         );
         return {
           success: true,
@@ -697,6 +701,10 @@ export class SubscriptionService {
         },
       });
 
+      this.logger.log(
+        `[SubscriptionService] Chat permit committed in DB: user=${userId}, tier=${planCode}, creditsAdded=+${plan.contactCredits}, expiresAt=${expiresAt.toISOString()}`,
+      );
+
       // Record subscription event for audit trail
       try {
         await tx.subscriptionEvent.create({
@@ -730,6 +738,7 @@ export class SubscriptionService {
    * Manually cancels or revokes a chat permit and resets user tier to BASIC.
    */
   async cancelChatPermit(userId: string) {
+    this.logger.log(`[SubscriptionService] cancelChatPermit initiated for user ${userId}`);
     const existing = await this.prisma.subscription.findUnique({
       where: { userId },
     });
@@ -745,6 +754,7 @@ export class SubscriptionService {
           expiresAt: new Date(),
         },
       });
+      this.logger.log(`[SubscriptionService] Subscription status set to CANCELLED for user ${userId}`);
     }
 
     await this.prisma.user.update({
@@ -802,6 +812,9 @@ export class SubscriptionService {
     });
 
     if (quota.interestsSent > limit) {
+      this.logger.warn(
+        `[SubscriptionService] Interest quota limit reached: user=${userId}, sentToday=${quota.interestsSent}, limit=${limit}`,
+      );
       return { allowed: false, remaining: 0 };
     }
 
@@ -965,11 +978,14 @@ export class SubscriptionService {
     const currentSub = sub;
     const isUnlimited = (currentSub.contactCredits || 0) >= 9000;
     if (!isUnlimited && (currentSub.contactCredits || 0) <= 0) {
+      this.logger.warn(`[SubscriptionService] unlockContact rejected: viewer ${viewerId} has exhausted credits.`);
       throw new ForbiddenException({
         code: 'CONTACT_CREDITS_EXHAUSTED',
         message: 'You have used all available contact credits. Please upgrade your permit to unlock more contact numbers.',
       });
     }
+
+    this.logger.log(`[SubscriptionService] unlockContact requested: viewerId=${viewerId}, targetUserId=${targetUser.id}`);
 
     // Atomically create unlock record & decrement credit inside transaction with concurrency guard
     return this.prisma.$transaction(async (tx) => {
@@ -980,6 +996,7 @@ export class SubscriptionService {
         });
 
         if (!freshSub || (freshSub.contactCredits || 0) <= 0) {
+          this.logger.warn(`[SubscriptionService] Concurrent unlock blocked: viewer ${viewerId} has 0 credits remaining.`);
           throw new ForbiddenException({
             code: 'CONTACT_CREDITS_EXHAUSTED',
             message: 'You have used all available contact credits. Please upgrade your permit to unlock more contact numbers.',
@@ -1002,6 +1019,10 @@ export class SubscriptionService {
         });
         updatedCredits = updatedSub.contactCredits;
       }
+
+      this.logger.log(
+        `[SubscriptionService] Contact unlock SUCCESS: viewerId=${viewerId} unlocked targetUserId=${targetUser.id}. CreditsRemaining=${updatedCredits}`,
+      );
 
       return {
         success: true,
