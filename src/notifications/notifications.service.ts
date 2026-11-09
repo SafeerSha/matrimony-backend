@@ -74,9 +74,10 @@ export class NotificationsService {
     if (typeof messageContent === 'string' && (messageContent.trim().startsWith('{"replyTo":') || messageContent.trim().startsWith('{"text":'))) {
       try {
         const parsed = JSON.parse(messageContent.trim());
-        if (parsed && typeof parsed.text === 'string') {
-          const replyName = parsed.replyTo?.name;
-          cleanMessage = replyName ? `Replied to ${replyName}: ${parsed.text}` : parsed.text;
+        if (parsed && typeof parsed.text === 'string' && parsed.text.trim()) {
+          cleanMessage = parsed.text.trim();
+        } else {
+          cleanMessage = 'New message';
         }
       } catch {}
     }
@@ -142,7 +143,12 @@ export class NotificationsService {
 
   async getUserNotifications(userId: string) {
     const all = await this.prisma.notification.findMany({
-      where: { userId },
+      where: {
+        userId,
+        NOT: {
+          referenceId: userId,
+        },
+      },
       orderBy: { createdAt: 'desc' },
     });
 

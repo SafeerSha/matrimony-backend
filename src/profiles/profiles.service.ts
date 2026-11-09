@@ -61,9 +61,12 @@ export function formatPreferencesObject(profilePrefs: any, tablePref: any) {
 
   const gender = p.gender !== undefined && p.gender !== null ? String(p.gender) : null;
   const caste = p.caste !== undefined && p.caste !== null ? String(p.caste) : null;
-  const income = p.income !== undefined && p.income !== null ? String(p.income) : null;
-  const intent = p.intent !== undefined && p.intent !== null ? String(p.intent) : null;
-  const language = p.language !== undefined && p.language !== null ? String(p.language) : null;
+  const income = p.income !== undefined && p.income !== null ? String(p.income) : (p.minIncome !== undefined && p.minIncome !== null ? String(p.minIncome) : null);
+  const intent = p.intent !== undefined && p.intent !== null ? String(p.intent) : (p.partnerIntent !== undefined && p.partnerIntent !== null ? String(p.partnerIntent) : null);
+  const rawLanguages = parseStringOrArray(p.languages || p.language);
+  const language = rawLanguages.length > 0 ? rawLanguages.join(', ') : (p.language !== undefined && p.language !== null ? String(p.language) : null);
+  const languages = rawLanguages.length > 0 ? rawLanguages : (language ? [language] : []);
+  const matrimonyCommunity = p.matrimonyCommunity !== undefined && p.matrimonyCommunity !== null ? String(p.matrimonyCommunity) : 'Kerala';
 
   return {
     minAge,
@@ -80,8 +83,15 @@ export function formatPreferencesObject(profilePrefs: any, tablePref: any) {
     gender,
     caste,
     income,
+    minIncome: income,
     intent,
+    partnerIntent: intent,
     language,
+    languages,
+    matrimonyCommunity,
+    openToRelocate: Boolean(p.openToRelocate),
+    lifestyleHabits: parseStringOrArray(p.lifestyleHabits),
+    aboutPartner: p.aboutPartner ? String(p.aboutPartner) : '',
     ...(p.notificationPreferences ? { notificationPreferences: p.notificationPreferences } : {}),
   };
 }

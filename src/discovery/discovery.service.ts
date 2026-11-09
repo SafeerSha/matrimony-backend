@@ -165,12 +165,65 @@ export class DiscoveryService {
           ],
         });
       } else if (commLower.includes('bharat')) {
+        // Bharat represents Pan-India, excluding Kerala and Telugu matrimony profiles
+        const keralaCities = ['kochi', 'thrissur', 'calicut', 'kottayam', 'trivandrum', 'palakkad', 'kozhikode', 'ernakulam', 'kannur', 'alappuzha', 'kollam', 'malappuram', 'kasaragod', 'wayanad', 'pathanamthitta', 'idukki'];
+        const teluguCities = ['hyderabad', 'visakhapatnam', 'vizag', 'vijayawada', 'guntur', 'warangal', 'tirupati', 'kurnool', 'nellore', 'rajahmundry'];
+
         profileConditions.push({
-          OR: [
-            { community: { contains: 'Bharat', mode: 'insensitive' } },
-            { country: { contains: 'India', mode: 'insensitive' } },
-            { community: null },
-            { community: '' },
+          AND: [
+            {
+              OR: [
+                { state: null },
+                {
+                  NOT: {
+                    OR: [
+                      { state: { contains: 'Kerala', mode: 'insensitive' } },
+                      { state: { contains: 'Andhra', mode: 'insensitive' } },
+                      { state: { contains: 'Telangana', mode: 'insensitive' } },
+                    ],
+                  },
+                },
+              ],
+            },
+            {
+              OR: [
+                { community: null },
+                {
+                  NOT: {
+                    OR: [
+                      { community: { contains: 'Kerala', mode: 'insensitive' } },
+                      { community: { contains: 'Telugu', mode: 'insensitive' } },
+                    ],
+                  },
+                },
+              ],
+            },
+            {
+              OR: [
+                { motherTongue: null },
+                {
+                  NOT: {
+                    OR: [
+                      { motherTongue: { contains: 'Malayalam', mode: 'insensitive' } },
+                      { motherTongue: { contains: 'Telugu', mode: 'insensitive' } },
+                    ],
+                  },
+                },
+              ],
+            },
+            {
+              OR: [
+                { city: null },
+                {
+                  NOT: {
+                    OR: [
+                      ...keralaCities.map((c) => ({ city: { contains: c, mode: 'insensitive' as const } })),
+                      ...teluguCities.map((c) => ({ city: { contains: c, mode: 'insensitive' as const } })),
+                    ],
+                  },
+                },
+              ],
+            },
           ],
         });
       }

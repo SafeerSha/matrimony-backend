@@ -77,8 +77,20 @@ export class UpdatePreferencesDto {
   income?: any;
 
   @IsOptional()
+  minIncome?: any;
+
+  @IsOptional()
   intent?: any;
 
   @IsOptional()
+  partnerIntent?: any;
+
+  @IsOptional()
   language?: any;
+
+  @IsOptional()
+  languages?: any;
+
+  @IsOptional()
+  matrimonyCommunity?: any;
 }
