@@ -19,39 +19,41 @@ export interface PlanConfig {
 export const SUBSCRIPTION_PLANS: PlanConfig[] = [
   {
     id: 'BASIC',
-    name: '1 Month Permit',
+    name: '1 Month Chat Permit',
     badge: 'Basic',
     price: 500,
     formattedPrice: '₹500',
     period: 'per month',
     durationDays: 30,
-    description: 'Ideal for trying out the platform and exploring matches.',
+    description: 'Active Premium for 30 days with verified contacts and daily interest quota.',
     features: [
       'Active Premium for 30 days',
-      'Send & accept chat requests',
+      'Send "Interests" only 20 per day',
       'Unlimited messaging with matches',
-      'Standard profile visibility',
+      'Standard Profile Visibility',
+      'Verified Contact Numbers - 20',
     ],
-    contactCredits: 10,
-    dailyInterestsLimit: 25,
+    contactCredits: 20,
+    dailyInterestsLimit: 20,
   },
   {
     id: 'STANDARD',
-    name: '3 Months Permit',
+    name: '3 Months Chat Permit',
     badge: 'Standard',
     price: 1250,
     formattedPrice: '₹1,250',
     period: 'for 90 days',
     durationDays: 90,
-    description: 'Our most popular plan. Best value for active matchmaking.',
+    description: 'Our most popular plan. Active matchmaking with verified connections.',
     features: [
       'Active Premium for 90 days',
-      'Send & accept chat requests',
+      'Send "Interests" only 40/ day',
       'Unlimited messaging with matches',
       'Priority profile visibility',
+      'Can View/Get Verified Contact Numbers',
     ],
-    contactCredits: 30,
-    dailyInterestsLimit: 50,
+    contactCredits: 60,
+    dailyInterestsLimit: 40,
     popular: true,
   },
   {
@@ -62,33 +64,35 @@ export const SUBSCRIPTION_PLANS: PlanConfig[] = [
     formattedPrice: '₹2,500',
     period: 'for 180 days',
     durationDays: 180,
-    description: 'Serious about finding a match with extended connection time.',
+    description: 'Serious about finding a match with extended priority connection time.',
     features: [
       'Active Premium for 180 days',
-      'Send & accept chat requests',
+      'Send "Interests" - Unlimited',
       'Unlimited messaging with matches',
-      'Priority profile visibility',
+      'High profile visibility',
+      'Can View/Get 120 verified Contact Numbers',
     ],
-    contactCredits: 75,
-    dailyInterestsLimit: 100,
+    contactCredits: 120,
+    dailyInterestsLimit: 9999,
   },
   {
     id: 'ELITE',
-    name: '1 Year Permit',
+    name: 'One year Chat permit',
     badge: 'Elite',
     price: 5000,
     formattedPrice: '₹5,000',
-    period: 'for 365 days',
+    period: 'for one year',
     durationDays: 365,
-    description: 'Complete peace of mind with 365 days of full unlimited access.',
+    description: 'Complete peace of mind with one year of full unlimited access.',
     features: [
-      'Active Premium for 365 days',
-      'Send & accept chat requests',
-      'Unlimited messaging with matches',
-      'Highest priority profile visibility',
+      'Active premium for one year',
+      'Send interests unlimited',
+      'Unlimited chat with matches',
+      'High profile visibility.',
+      'Can get unlimited contact numbers.',
     ],
-    contactCredits: 200,
-    dailyInterestsLimit: 200,
+    contactCredits: 9999,
+    dailyInterestsLimit: 9999,
   },
 ];
 
@@ -172,7 +176,21 @@ export class SubscriptionService {
             isActive: true,
             displayOrder: i + 1,
           },
-          update: {},
+          update: {
+            name: p.name,
+            badge: p.badge || null,
+            price: p.price,
+            formattedPrice: p.formattedPrice,
+            period: p.period,
+            durationDays: p.durationDays,
+            description: p.description,
+            features: p.features,
+            contactCredits: p.contactCredits,
+            dailyInterestsLimit: p.dailyInterestsLimit,
+            popular: Boolean(p.popular),
+            isActive: true,
+            displayOrder: i + 1,
+          },
         });
       }
     } catch (err: any) {
@@ -661,8 +679,9 @@ export class SubscriptionService {
    * Tracks and enforces daily connection request limits.
    */
   async checkAndIncrementInterestQuota(userId: string): Promise<{ allowed: boolean; remaining: number }> {
-    const hasPermit = await this.hasActiveChatPermit(userId);
-    const limit = hasPermit ? 100 : 10;
+    const sub = await this.prisma.subscription.findUnique({ where: { userId } });
+    const hasPermit = Boolean(sub?.status === 'ACTIVE' && sub?.expiresAt && new Date(sub.expiresAt) > new Date());
+    const limit = hasPermit ? (sub?.dailyInterestsLimit ?? 100) : 10;
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
