@@ -48,8 +48,29 @@ export class UpdateStatusBodyDto {
 }
 
 export class UpdateTierBodyDto {
-  @IsIn(['BASIC', 'PAID'], { message: 'tier must be BASIC or PAID' })
-  tier!: 'BASIC' | 'PAID';
+  @IsString()
+  tier!: string;
+}
+
+export class AssignPlanBodyDto {
+  @IsOptional()
+  @IsString()
+  planId?: string;
+
+  @IsOptional()
+  @IsString()
+  planCode?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(3650)
+  customDurationDays?: number;
+
+  @IsOptional()
+  @IsIn(['apply', 'revoke'])
+  action?: 'apply' | 'revoke' = 'apply';
 }
 
 export class VerifyPhotoBodyDto {

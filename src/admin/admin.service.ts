@@ -2,7 +2,8 @@ import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { STORAGE_SERVICE, StorageService } from '../storage/storage.interface';
-import type { AdminUserQueryDto } from './dto/user-query.dto';
+import { SubscriptionService } from '../subscription/subscription.service';
+import type { AdminUserQueryDto, AssignPlanBodyDto } from './dto/user-query.dto';
 
 /** Shared select for admin user list — never expose credential fields */
 const USER_LIST_SELECT = {
@@ -45,6 +46,18 @@ const USER_LIST_SELECT = {
     orderBy: { isPrimary: 'desc' as const },
     select: { id: true, url: true, isPrimary: true, isVerified: true },
   },
+  subscription: {
+    select: {
+      id: true,
+      tier: true,
+      status: true,
+      startDate: true,
+      expiresAt: true,
+      canChat: true,
+      contactCredits: true,
+      dailyInterestsLimit: true,
+    },
+  },
 } satisfies Prisma.UserSelect;
 
 @Injectable()
@@ -52,6 +65,7 @@ export class AdminService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(STORAGE_SERVICE) private readonly storageService: StorageService,
+    private readonly subscriptionService: SubscriptionService,
   ) {}
 
   async getUsers(params: AdminUserQueryDto = {}) {
@@ -284,7 +298,7 @@ export class AdminService {
     }
   }
 
-  async updateSubscriptionTier(userId: string, tier: 'BASIC' | 'PAID') {
+  async updateSubscriptionTier(userId: string, tier: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { id: true, email: true, subscriptionTier: true },
@@ -293,31 +307,66 @@ export class AdminService {
       throw new NotFoundException('User not found');
     }
 
-    // Idempotent: If unchanged, return immediately without recording duplicate event
-    if (user.subscriptionTier === tier) {
-      return user;
+    const normalizedTier = tier.toUpperCase();
+    if (normalizedTier === 'BASIC' || normalizedTier === 'FREE') {
+      await this.subscriptionService.cancelChatPermit(userId);
+    } else {
+      await this.subscriptionService.activatePermit(userId, normalizedTier, undefined, undefined, true);
     }
 
-    const previousTier = user.subscriptionTier;
-
-    return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.user.update({
-        where: { id: userId },
-        data: { subscriptionTier: tier },
-        select: { id: true, email: true, subscriptionTier: true },
-      });
-
-      await tx.subscriptionEvent.create({
-        data: {
-          userId,
-          fromTier: previousTier,
-          toTier: tier,
-          source: 'ADMIN',
-        },
-      });
-
-      return updated;
+    const updated = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: USER_LIST_SELECT,
     });
+    return updated;
+  }
+
+  async assignUserPlan(
+    userId: string,
+    data: AssignPlanBodyDto,
+  ) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, firstName: true, subscriptionTier: true },
+    });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (data.action === 'revoke' || data.planCode?.toUpperCase() === 'BASIC' || data.planCode?.toUpperCase() === 'FREE') {
+      const result = await this.subscriptionService.cancelChatPermit(userId);
+      const updatedUser = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: USER_LIST_SELECT,
+      });
+      return {
+        success: true,
+        message: 'Subscription plan revoked / reset to Basic',
+        user: updatedUser,
+        subscription: result.subscription,
+      };
+    }
+
+    const planIdentifier = data.planId || data.planCode || 'BASIC';
+    const result = await this.subscriptionService.activatePermit(
+      userId,
+      planIdentifier,
+      undefined,
+      data.customDurationDays,
+      true, // isAdminGrant
+    );
+
+    const updatedUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: USER_LIST_SELECT,
+    });
+
+    return {
+      success: true,
+      message: result.message,
+      user: updatedUser,
+      subscription: result.subscription,
+    };
   }
 
   async verifyPhoto(photoId: string, status: 'approved' | 'rejected') {

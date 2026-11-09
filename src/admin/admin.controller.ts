@@ -7,7 +7,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { AnalyticsQueryDto, AnalyticsTimeSeriesQueryDto } from './dto/analytics-query.dto';
-import { AdminUserQueryDto, UpdateStatusBodyDto, UpdateTierBodyDto, VerifyPhotoBodyDto } from './dto/user-query.dto';
+import { AdminUserQueryDto, UpdateStatusBodyDto, UpdateTierBodyDto, VerifyPhotoBodyDto, AssignPlanBodyDto } from './dto/user-query.dto';
 import { CreatePlanDto, UpdatePlanDto } from './dto/plan.dto';
 import { SubscriptionService } from '../subscription/subscription.service';
 import { ApiOperation } from '@nestjs/swagger';
@@ -88,6 +88,15 @@ export class AdminController {
     @Body() body: UpdateTierBodyDto,
   ) {
     return this.adminService.updateSubscriptionTier(userId, body.tier);
+  }
+
+  @Post('users/:id/assign-plan')
+  @ApiOperation({ summary: 'Manually assign or revoke user subscription plan' })
+  async assignUserPlan(
+    @Param('id') userId: string,
+    @Body() body: AssignPlanBodyDto,
+  ) {
+    return this.adminService.assignUserPlan(userId, body);
   }
 
   @Post('photos/:id/verify')

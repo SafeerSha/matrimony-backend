@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AdminService } from './admin.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { STORAGE_SERVICE, StorageService } from '../storage/storage.interface';
+import { SubscriptionService } from '../subscription/subscription.service';
 import { NotFoundException } from '@nestjs/common';
 
 describe('AdminService', () => {
@@ -33,6 +34,11 @@ describe('AdminService', () => {
     $transaction: jest.fn<any>(),
   };
 
+  const mockSubscriptionService = {
+    activatePermit: jest.fn<any>(),
+    cancelChatPermit: jest.fn<any>(),
+  };
+
   const mockStorageService = {
     uploadFile: jest.fn<any>(),
     deleteFile: jest.fn<any>(),
@@ -44,6 +50,7 @@ describe('AdminService', () => {
         AdminService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: STORAGE_SERVICE, useValue: mockStorageService },
+        { provide: SubscriptionService, useValue: mockSubscriptionService },
       ],
     }).compile();
 
@@ -117,55 +124,70 @@ describe('AdminService', () => {
       );
     });
 
-    it('should be idempotent and skip transaction if tier is unchanged', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({
-        id: '1',
-        email: 'test@test.com',
-        subscriptionTier: 'PAID',
-      });
+    it('should activate permit via subscriptionService when tier is PAID', async () => {
+      mockPrisma.user.findUnique
+        .mockResolvedValueOnce({
+          id: '1',
+          email: 'test@test.com',
+          subscriptionTier: 'BASIC',
+        } as any)
+        .mockResolvedValueOnce({
+          id: '1',
+          email: 'test@test.com',
+          subscriptionTier: 'PAID',
+        } as any);
+
+      mockSubscriptionService.activatePermit.mockResolvedValue({ success: true } as any);
 
       const result = await service.updateSubscriptionTier('1', 'PAID');
-      expect(result.subscriptionTier).toBe('PAID');
-      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+      expect(result?.subscriptionTier).toBe('PAID');
+      expect(mockSubscriptionService.activatePermit).toHaveBeenCalledWith('1', 'PAID', undefined, undefined, true);
     });
 
-    it('should update tier and record SubscriptionEvent inside $transaction when tier changes', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({
-        id: '1',
-        email: 'test@test.com',
-        subscriptionTier: 'BASIC',
-      });
+    it('should cancel permit via subscriptionService when tier is BASIC', async () => {
+      mockPrisma.user.findUnique
+        .mockResolvedValueOnce({
+          id: '1',
+          email: 'test@test.com',
+          subscriptionTier: 'PAID',
+        } as any)
+        .mockResolvedValueOnce({
+          id: '1',
+          email: 'test@test.com',
+          subscriptionTier: 'BASIC',
+        } as any);
 
-      const txUserUpdate = jest.fn<any>().mockResolvedValue({
-        id: '1',
-        email: 'test@test.com',
-        subscriptionTier: 'PAID',
-      });
-      const txEventCreate = jest.fn<any>().mockResolvedValue({ id: 'evt-1' });
+      mockSubscriptionService.cancelChatPermit.mockResolvedValue({ success: true } as any);
 
-      mockPrisma.$transaction.mockImplementation(async (callback: any) => {
-        return callback({
-          user: { update: txUserUpdate },
-          subscriptionEvent: { create: txEventCreate },
-        });
-      });
+      const result = await service.updateSubscriptionTier('1', 'BASIC');
+      expect(result?.subscriptionTier).toBe('BASIC');
+      expect(mockSubscriptionService.cancelChatPermit).toHaveBeenCalledWith('1');
+    });
+  });
 
-      const result = await service.updateSubscriptionTier('1', 'PAID');
-      expect(result.subscriptionTier).toBe('PAID');
-      expect(mockPrisma.$transaction).toHaveBeenCalled();
-      expect(txUserUpdate).toHaveBeenCalledWith({
-        where: { id: '1' },
-        data: { subscriptionTier: 'PAID' },
-        select: { id: true, email: true, subscriptionTier: true },
-      });
-      expect(txEventCreate).toHaveBeenCalledWith({
-        data: {
-          userId: '1',
-          fromTier: 'BASIC',
-          toTier: 'PAID',
-          source: 'ADMIN',
-        },
-      });
+  describe('assignUserPlan', () => {
+    it('should activate selected plan for user', async () => {
+      mockPrisma.user.findUnique
+        .mockResolvedValueOnce({
+          id: 'u1',
+          email: 'u1@test.com',
+          subscriptionTier: 'BASIC',
+        } as any)
+        .mockResolvedValueOnce({
+          id: 'u1',
+          email: 'u1@test.com',
+          subscriptionTier: 'PLUS',
+        } as any);
+
+      mockSubscriptionService.activatePermit.mockResolvedValue({
+        success: true,
+        message: 'Plan activated',
+        subscription: { id: 's1', tier: 'PLUS' },
+      } as any);
+
+      const result = await service.assignUserPlan('u1', { planCode: 'PLUS', customDurationDays: 60 });
+      expect(result.success).toBe(true);
+      expect(mockSubscriptionService.activatePermit).toHaveBeenCalledWith('u1', 'PLUS', undefined, 60, true);
     });
   });
 

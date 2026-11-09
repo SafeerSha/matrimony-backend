@@ -521,9 +521,15 @@ export class SubscriptionService {
   /**
    * Activates or extends a member's chat permit.
    */
-  async activatePermit(userId: string, tierName: string, paymentDetails?: { paymentId?: string; amount?: number }) {
+  async activatePermit(
+    userId: string,
+    tierName: string,
+    paymentDetails?: { paymentId?: string; amount?: number },
+    customDurationDays?: number,
+    isAdminGrant?: boolean,
+  ) {
     const isFreeTrial = process.env.ENABLE_FREE_TRIAL !== 'false';
-    if (!isFreeTrial && (!paymentDetails?.paymentId || paymentDetails.paymentId.startsWith('DEMO-'))) {
+    if (!isAdminGrant && !isFreeTrial && (!paymentDetails?.paymentId || paymentDetails.paymentId.startsWith('DEMO-'))) {
       throw new BadRequestException('Payment is required to activate subscription. Free trial mode is disabled.');
     }
 
@@ -546,7 +552,8 @@ export class SubscriptionService {
       ? new Date(existing.expiresAt)
       : now;
 
-    const expiresAt = new Date(baseDate.getTime() + plan.durationDays * 24 * 60 * 60 * 1000);
+    const durationDays = customDurationDays && customDurationDays > 0 ? customDurationDays : plan.durationDays;
+    const expiresAt = new Date(baseDate.getTime() + durationDays * 24 * 60 * 60 * 1000);
 
     const planCode = (plan as any).code || plan.id;
 
@@ -560,8 +567,8 @@ export class SubscriptionService {
         expiresAt,
         contactCredits: plan.contactCredits,
         dailyInterestsLimit: plan.dailyInterestsLimit,
-        paymentId: paymentDetails?.paymentId || `DEMO-${Date.now()}`,
-        amountPaid: paymentDetails?.amount || plan.price,
+        paymentId: paymentDetails?.paymentId || (isAdminGrant ? `ADMIN-GRANT-${Date.now()}` : `DEMO-${Date.now()}`),
+        amountPaid: paymentDetails?.amount || (isAdminGrant ? 0 : plan.price),
       },
       update: {
         tier: planCode,
@@ -570,7 +577,7 @@ export class SubscriptionService {
         expiresAt,
         contactCredits: { increment: plan.contactCredits },
         dailyInterestsLimit: plan.dailyInterestsLimit,
-        paymentId: paymentDetails?.paymentId || existing?.paymentId,
+        paymentId: paymentDetails?.paymentId || existing?.paymentId || (isAdminGrant ? `ADMIN-GRANT-${Date.now()}` : undefined),
         amountPaid: paymentDetails?.amount || plan.price,
       },
     });
@@ -583,7 +590,7 @@ export class SubscriptionService {
           userId,
           fromTier: existing?.tier || 'FREE',
           toTier: planCode,
-          source: paymentDetails?.paymentId ? 'GATEWAY' : 'MANUAL_ACTIVATION',
+          source: isAdminGrant ? 'ADMIN' : paymentDetails?.paymentId ? 'GATEWAY' : 'MANUAL_ACTIVATION',
         },
       });
 
@@ -599,6 +606,53 @@ export class SubscriptionService {
     return {
       success: true,
       message: `Chat permit activated successfully for ${plan.name}`,
+      subscription,
+    };
+  }
+
+  /**
+   * Manually cancels or revokes a chat permit and resets user tier to BASIC.
+   */
+  async cancelChatPermit(userId: string) {
+    const existing = await this.prisma.subscription.findUnique({
+      where: { userId },
+    });
+
+    let subscription = null;
+    if (existing) {
+      subscription = await this.prisma.subscription.update({
+        where: { userId },
+        data: {
+          status: 'CANCELLED',
+          canChat: false,
+          tier: 'FREE',
+          expiresAt: new Date(),
+        },
+      });
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { subscriptionTier: 'BASIC' },
+    });
+
+    try {
+      await this.prisma.subscriptionEvent.create({
+        data: {
+          id: `sub-evt-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          userId,
+          fromTier: existing?.tier || 'PAID',
+          toTier: 'BASIC',
+          source: 'ADMIN',
+        },
+      });
+    } catch (e: any) {
+      this.logger.warn(`Could not log subscription cancel event: ${e?.message}`);
+    }
+
+    return {
+      success: true,
+      message: 'Subscription downgraded to Basic/Free successfully',
       subscription,
     };
   }
