@@ -19,6 +19,7 @@ import { ChatModule } from './chat/chat.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { SubscriptionModule } from './subscription/subscription.module';
+import { PaymentModule } from './payment/payment.module';
 import { MailModule } from './mail/mail.module';
 import { SmsModule } from './sms/sms.module';
 
@@ -47,6 +48,7 @@ import { SmsModule } from './sms/sms.module';
     NotificationsModule,
     OnboardingModule,
     SubscriptionModule,
+    PaymentModule,
     MailModule,
     SmsModule,
   ],
