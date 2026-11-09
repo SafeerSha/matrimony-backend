@@ -45,6 +45,8 @@ model User {
   devices             UserDevice[]
   subscription        Subscription?
   dailyQuotas         UserDailyQuota[]
+  unlockedContacts    ContactUnlock[]   @relation("UnlockedByUser")
+  contactUnlockedBy   ContactUnlock[]   @relation("UnlockedTargetUser")
 
   @@index([createdAt])
   @@index([lastActiveAt])
@@ -279,4 +281,17 @@ model Plan {
 
   @@index([isActive])
   @@index([displayOrder])
+}
+
+model ContactUnlock {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation("UnlockedByUser", fields: [userId], references: [id], onDelete: Cascade)
+  targetUserId String
+  targetUser   User     @relation("UnlockedTargetUser", fields: [targetUserId], references: [id], onDelete: Cascade)
+  unlockedAt   DateTime @default(now())
+
+  @@unique([userId, targetUserId])
+  @@index([userId])
+  @@index([targetUserId])
 }

@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Body,
+  Param,
   UseGuards,
   BadRequestException,
 } from '@nestjs/common';
@@ -27,6 +28,44 @@ export class SubscriptionController {
   async getStatus(@CurrentUser() user: any) {
     const userId = user?.sub || user?.id;
     return this.subscriptionService.getUserSubscription(userId);
+  }
+
+  @ApiBearerAuth('JWT-auth')
+  @UseGuards(JwtAuthGuard)
+  @Get('usage')
+  async getUsage(@CurrentUser() user: any) {
+    const userId = user?.sub || user?.id;
+    return this.subscriptionService.getUserSubscription(userId);
+  }
+
+  @ApiBearerAuth('JWT-auth')
+  @UseGuards(JwtAuthGuard)
+  @Get('contacts/status/:targetId')
+  async getContactStatus(
+    @CurrentUser() user: any,
+    @Param('targetId') targetId: string,
+  ) {
+    const userId = user?.sub || user?.id;
+    return this.subscriptionService.getContactStatus(userId, targetId);
+  }
+
+  @ApiBearerAuth('JWT-auth')
+  @UseGuards(JwtAuthGuard)
+  @Post('contacts/unlock/:targetId')
+  async unlockContact(
+    @CurrentUser() user: any,
+    @Param('targetId') targetId: string,
+  ) {
+    const userId = user?.sub || user?.id;
+    return this.subscriptionService.unlockContact(userId, targetId);
+  }
+
+  @ApiBearerAuth('JWT-auth')
+  @UseGuards(JwtAuthGuard)
+  @Get('contacts/my-unlocked')
+  async getMyUnlockedContacts(@CurrentUser() user: any) {
+    const userId = user?.sub || user?.id;
+    return this.subscriptionService.getUnlockedContacts(userId);
   }
 
   @ApiBearerAuth('JWT-auth')

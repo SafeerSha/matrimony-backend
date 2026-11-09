@@ -235,6 +235,7 @@ export class ProfilesService {
               firstName: true,
               lastName: true,
               profileId: true,
+              phone: true,
               status: true,
               lastActiveAt: true,
               isPhoneVerified: true,
@@ -352,14 +353,31 @@ export class ProfilesService {
       }
     }
 
+    const isSelf = Boolean(viewerId && viewerId === profile.userId);
+    let isContactUnlocked = isSelf;
+
+    if (viewerId && !isSelf) {
+      const unlock = await this.prisma.contactUnlock.findUnique({
+        where: {
+          userId_targetUserId: {
+            userId: viewerId,
+            targetUserId: profile.userId,
+          },
+        },
+      });
+      if (unlock) {
+        isContactUnlocked = true;
+      }
+    }
+
     const sanitizedProfile: any = { ...profile };
-    // PRIVACY ENFORCEMENT: Permanent Address, phone number, and email must be hidden from public profile
-    if (!viewerId || viewerId !== profile.userId) {
+    // PRIVACY ENFORCEMENT: Permanent Address, phone number, and email must be hidden unless unlocked or self
+    if (!isSelf) {
       delete sanitizedProfile.permanentAddress;
       if (sanitizedProfile.user) {
         sanitizedProfile.user = {
           ...sanitizedProfile.user,
-          phone: undefined,
+          phone: isContactUnlocked ? profile.user?.phone : undefined,
           email: undefined,
         };
       }
@@ -395,6 +413,8 @@ export class ProfilesService {
       isDeclined,
       isDeclinedByThem,
       isDeclinedByMe,
+      isContactUnlocked,
+      phone: isContactUnlocked ? profile.user?.phone : undefined,
     };
   }
 

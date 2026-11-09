@@ -346,6 +346,7 @@ export class DiscoveryService {
         take: limit,
         include: {
           profile: true,
+          subscription: true,
           photos: {
             orderBy: { createdAt: 'desc' }
           },
@@ -454,6 +455,24 @@ export class DiscoveryService {
 
       if (!isInteractedA && isInteractedB) return -1;
       if (isInteractedA && !isInteractedB) return 1;
+
+      // Plan Visibility Boost (Priority for Standard, High for Plus, VIP for Elite)
+      const tierBoostMap: Record<string, number> = {
+        ELITE: 30,
+        PLUS: 20,
+        STANDARD: 10,
+        BASIC: 0,
+        FREE: 0,
+      };
+      const now = Date.now();
+      const boostA = a.subscription && a.subscription.status === 'ACTIVE' && a.subscription.expiresAt && new Date(a.subscription.expiresAt).getTime() > now
+        ? (tierBoostMap[a.subscription.tier?.toUpperCase()] || 0)
+        : 0;
+      const boostB = b.subscription && b.subscription.status === 'ACTIVE' && b.subscription.expiresAt && new Date(b.subscription.expiresAt).getTime() > now
+        ? (tierBoostMap[b.subscription.tier?.toUpperCase()] || 0)
+        : 0;
+
+      if (boostB !== boostA) return boostB - boostA;
 
       if (query.sortBy === 'compatibility') {
         const diff = (b.compatibility || 0) - (a.compatibility || 0);

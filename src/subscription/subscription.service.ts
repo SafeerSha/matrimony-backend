@@ -1,4 +1,4 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface PlanConfig {
@@ -480,6 +480,13 @@ export class SubscriptionService {
     const interestsSentToday = quotaRecord?.interestsSent || 0;
     const dailyInterestsRemaining = Math.max(0, dailyLimit - interestsSentToday);
 
+    const unlockedContactsCount = await this.prisma.contactUnlock.count({
+      where: { userId },
+    });
+
+    const isUnlimitedInterests = dailyLimit >= 9000;
+    const isUnlimitedContacts = (sub?.contactCredits || 0) >= 9000;
+
     return {
       userId,
       tier: activeTier,
@@ -490,9 +497,45 @@ export class SubscriptionService {
       expiresAt: sub?.expiresAt || null,
       daysRemaining,
       contactCredits: sub?.contactCredits || 0,
+      unlockedContactsCount,
       dailyInterestsLimit: dailyLimit,
       dailyInterestsSentToday: interestsSentToday,
       dailyInterestsRemaining,
+      usage: {
+        messaging: {
+          allowed: isSubscribed,
+          unlimited: isSubscribed,
+        },
+        interests: {
+          dailyLimit,
+          sentToday: interestsSentToday,
+          remainingToday: dailyInterestsRemaining,
+          isUnlimited: isUnlimitedInterests,
+        },
+        contacts: {
+          creditsRemaining: sub?.contactCredits || 0,
+          unlockedCount: unlockedContactsCount,
+          isUnlimited: isUnlimitedContacts,
+        },
+        visibility: {
+          level:
+            activeTier === 'ELITE'
+              ? 'Highest VIP Visibility'
+              : activeTier === 'PLUS'
+              ? 'High Visibility'
+              : activeTier === 'STANDARD'
+              ? 'Priority Visibility'
+              : 'Standard Profile Visibility',
+          boost:
+            activeTier === 'ELITE'
+              ? 30
+              : activeTier === 'PLUS'
+              ? 20
+              : activeTier === 'STANDARD'
+              ? 10
+              : 0,
+        },
+      },
     };
   }
 
@@ -711,6 +754,244 @@ export class SubscriptionService {
       allowed: true,
       remaining: Math.max(0, limit - quota.interestsSent),
     };
+  }
+
+  /**
+   * Helper to resolve target user by UUID or profileId
+   */
+  private async resolveTargetUser(identifier: string) {
+    const raw = (identifier || '').trim();
+    if (!raw) throw new BadRequestException('Target user identifier is required');
+
+    const imcNormalized = raw.toUpperCase().startsWith('IMC-')
+      ? raw.toUpperCase()
+      : `IMC-${raw.toUpperCase()}`;
+
+    const user = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { id: raw },
+          { profileId: raw },
+          { profileId: imcNormalized },
+          { profileId: { equals: raw, mode: 'insensitive' } },
+          { profileId: { equals: imcNormalized, mode: 'insensitive' } },
+          { profile: { id: raw } },
+        ],
+      },
+      select: {
+        id: true,
+        phone: true,
+        isPhoneVerified: true,
+        firstName: true,
+        lastName: true,
+        profileId: true,
+        profile: {
+          select: {
+            city: true,
+            state: true,
+            occupation: true,
+          },
+        },
+        photos: {
+          where: { isPrimary: true },
+          take: 1,
+          select: { url: true },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Profile or user not found');
+    }
+
+    return user;
+  }
+
+  /**
+   * Check if viewer has already unlocked target user's contact number
+   * and whether viewer has sufficient quota/credits to unlock.
+   */
+  async getContactStatus(viewerId: string, targetIdentifier: string) {
+    const targetUser = await this.resolveTargetUser(targetIdentifier);
+    const isSelf = viewerId === targetUser.id;
+
+    if (isSelf) {
+      return {
+        isUnlocked: true,
+        phone: targetUser.phone,
+        isSelf: true,
+        canUnlock: true,
+        creditsRemaining: 9999,
+        isUnlimited: true,
+      };
+    }
+
+    const existingUnlock = await this.prisma.contactUnlock.findUnique({
+      where: {
+        userId_targetUserId: {
+          userId: viewerId,
+          targetUserId: targetUser.id,
+        },
+      },
+    });
+
+    const sub = await this.prisma.subscription.findUnique({ where: { userId: viewerId } });
+    const isSubscribed = Boolean(
+      sub && sub.status === 'ACTIVE' && sub.expiresAt && new Date(sub.expiresAt) > new Date(),
+    );
+
+    const creditsRemaining = sub?.contactCredits || 0;
+    const isUnlimited = creditsRemaining >= 9000;
+    const canUnlock = Boolean(isSubscribed && (creditsRemaining > 0 || isUnlimited));
+
+    return {
+      isUnlocked: Boolean(existingUnlock),
+      phone: existingUnlock ? targetUser.phone : null,
+      isSelf: false,
+      canUnlock: Boolean(existingUnlock) || canUnlock,
+      creditsRemaining,
+      isUnlimited,
+      isSubscribed,
+    };
+  }
+
+  /**
+   * Atomically unlock a target user's verified contact number.
+   * If already unlocked, returns contact with 0 credit deduction.
+   * If new, verifies active permit, checks contactCredits > 0, decrements credit, and records unlock.
+   */
+  async unlockContact(viewerId: string, targetIdentifier: string) {
+    const targetUser = await this.resolveTargetUser(targetIdentifier);
+
+    if (viewerId === targetUser.id) {
+      return {
+        success: true,
+        phone: targetUser.phone,
+        alreadyUnlocked: true,
+        creditsRemaining: 9999,
+        isUnlimited: true,
+      };
+    }
+
+    // Check if already unlocked
+    const existing = await this.prisma.contactUnlock.findUnique({
+      where: {
+        userId_targetUserId: {
+          userId: viewerId,
+          targetUserId: targetUser.id,
+        },
+      },
+    });
+
+    if (existing) {
+      const sub = await this.prisma.subscription.findUnique({ where: { userId: viewerId } });
+      return {
+        success: true,
+        phone: targetUser.phone,
+        alreadyUnlocked: true,
+        creditsRemaining: sub?.contactCredits || 0,
+        isUnlimited: (sub?.contactCredits || 0) >= 9000,
+      };
+    }
+
+    // Verify permit & credits
+    const sub = await this.prisma.subscription.findUnique({ where: { userId: viewerId } });
+    const isSubscribed = Boolean(
+      sub && sub.status === 'ACTIVE' && sub.expiresAt && new Date(sub.expiresAt) > new Date(),
+    );
+
+    if (!sub || !isSubscribed) {
+      throw new ForbiddenException({
+        code: 'PERMIT_REQUIRED',
+        message: 'An active Chat Permit is required to unlock verified contact numbers.',
+      });
+    }
+
+    const currentSub = sub;
+    const isUnlimited = (currentSub.contactCredits || 0) >= 9000;
+    if (!isUnlimited && (currentSub.contactCredits || 0) <= 0) {
+      throw new ForbiddenException({
+        code: 'CONTACT_CREDITS_EXHAUSTED',
+        message: 'You have used all available contact credits. Please upgrade your permit to unlock more contact numbers.',
+      });
+    }
+
+    // Atomically create unlock record & decrement credit
+    return this.prisma.$transaction(async (tx) => {
+      await tx.contactUnlock.create({
+        data: {
+          userId: viewerId,
+          targetUserId: targetUser.id,
+        },
+      });
+
+      let updatedCredits = currentSub.contactCredits;
+      if (!isUnlimited) {
+        const updatedSub = await tx.subscription.update({
+          where: { id: currentSub.id },
+          data: { contactCredits: { decrement: 1 } },
+        });
+        updatedCredits = updatedSub.contactCredits;
+      }
+
+      return {
+        success: true,
+        phone: targetUser.phone,
+        alreadyUnlocked: false,
+        creditsRemaining: updatedCredits,
+        isUnlimited,
+      };
+    });
+  }
+
+  /**
+   * List all verified contacts unlocked by the user.
+   */
+  async getUnlockedContacts(viewerId: string) {
+    const unlocks = await this.prisma.contactUnlock.findMany({
+      where: { userId: viewerId },
+      orderBy: { unlockedAt: 'desc' },
+      include: {
+        targetUser: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            profileId: true,
+            phone: true,
+            isPhoneVerified: true,
+            profile: {
+              select: {
+                city: true,
+                state: true,
+                occupation: true,
+                education: true,
+              },
+            },
+            photos: {
+              where: { isPrimary: true },
+              take: 1,
+              select: { url: true },
+            },
+          },
+        },
+      },
+    });
+
+    return unlocks.map((u) => ({
+      unlockId: u.id,
+      unlockedAt: u.unlockedAt,
+      userId: u.targetUser.id,
+      profileId: u.targetUser.profileId,
+      name: `${u.targetUser.firstName || ''} ${u.targetUser.lastName || ''}`.trim() || 'Member',
+      phone: u.targetUser.phone,
+      isPhoneVerified: u.targetUser.isPhoneVerified,
+      city: u.targetUser.profile?.city,
+      state: u.targetUser.profile?.state,
+      occupation: u.targetUser.profile?.occupation,
+      education: u.targetUser.profile?.education,
+      avatarUrl: u.targetUser.photos?.[0]?.url || '',
+    }));
   }
 }
 
