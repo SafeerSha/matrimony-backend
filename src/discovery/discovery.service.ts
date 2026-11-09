@@ -46,7 +46,16 @@ export class DiscoveryService {
     }
 
     if (query.city) {
-      profileConditions.push({ city: { contains: query.city, mode: 'insensitive' } });
+      const cityTerms = query.city.split(',').map((c) => c.trim()).filter(Boolean);
+      if (cityTerms.length === 1) {
+        profileConditions.push({ city: { contains: cityTerms[0], mode: 'insensitive' } });
+      } else if (cityTerms.length > 1) {
+        profileConditions.push({
+          OR: cityTerms.map((c) => ({
+            city: { contains: c, mode: 'insensitive' },
+          })),
+        });
+      }
     }
 
     if (query.maritalStatus) {
@@ -446,6 +455,12 @@ export class DiscoveryService {
       if (!isInteractedA && isInteractedB) return -1;
       if (isInteractedA && !isInteractedB) return 1;
 
+      if (query.sortBy === 'compatibility') {
+        const diff = (b.compatibility || 0) - (a.compatibility || 0);
+        if (diff !== 0) return diff;
+        return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+      }
+
       if (query.sortBy === 'recent') {
         const timeA = a.lastActiveAt ? new Date(a.lastActiveAt).getTime() : 0;
         const timeB = b.lastActiveAt ? new Date(b.lastActiveAt).getTime() : 0;
@@ -528,7 +543,8 @@ export class DiscoveryService {
       query.diet = diet;
     }
 
-    query.limit = '10';
+    query.sortBy = 'compatibility';
+    query.limit = '15';
 
     return this.searchProfiles(query, currentUserId);
   }
