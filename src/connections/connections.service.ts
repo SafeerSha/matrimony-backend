@@ -308,28 +308,31 @@ export class ConnectionsService {
     const receiverId = await this.resolveUserId(rawReceiverId);
     const connection = await this.prisma.connection.findFirst({
       where: {
-        senderId,
-        receiverId,
-        status: 'PENDING',
+        OR: [
+          { senderId, receiverId },
+          { senderId: receiverId, receiverId: senderId },
+        ],
       },
     });
 
     if (!connection) {
-      throw new NotFoundException('Pending interest request not found');
+      throw new NotFoundException('Interest request or connection not found');
     }
 
-    // Delete the pending connection so the user is free to interact again later
+    // Delete the connection so the user is free to interact again later
     await this.prisma.connection.delete({
       where: { id: connection.id },
     });
 
-    // Clean up corresponding notification for the recipient
+    // Clean up corresponding notification for both parties
     try {
       await this.prisma.notification.deleteMany({
         where: {
-          userId: receiverId,
-          type: 'NEW_INTEREST',
-          referenceId: senderId,
+          OR: [
+            { userId: receiverId, referenceId: senderId },
+            { userId: senderId, referenceId: receiverId },
+          ],
+          type: { in: ['NEW_INTEREST', 'MATCH_ACCEPTED'] },
         },
       });
     } catch {

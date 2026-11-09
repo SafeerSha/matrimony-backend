@@ -426,7 +426,7 @@ export class DiscoveryService {
         connectionStatus,
         isOnline,
         lastActiveAt: rest.lastActiveAt || null,
-        isInterestSent: connectionStatus === 'SENT' || connectionStatus === 'MATCHED',
+        isInterestSent: connectionStatus === 'SENT',
         isInterestReceived: connectionStatus === 'RECEIVED',
         isMatched: connectionStatus === 'MATCHED',
         isShortlisted: connectionStatus === 'SHORTLISTED' || userFavorites.has(user.id),

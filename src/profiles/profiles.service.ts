@@ -312,7 +312,7 @@ export class ProfilesService {
         if (connection.status === 'ACCEPTED' || hasMessages) {
           connectionStatus = 'MATCHED';
           isMatched = true;
-          isInterestSent = true;
+          isInterestSent = false;
         } else if (connection.senderId === viewerId) {
           if (connection.status === 'PENDING') {
             connectionStatus = 'SENT';
@@ -338,7 +338,7 @@ export class ProfilesService {
       } else if (hasMessages) {
         connectionStatus = 'MATCHED';
         isMatched = true;
-        isInterestSent = true;
+        isInterestSent = false;
       }
 
       const viewerProfile = await this.prisma.profile.findUnique({
