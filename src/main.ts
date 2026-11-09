@@ -14,7 +14,7 @@ async function bootstrap(){
     databaseUrlAvailable: !!process.env.DATABASE_URL,
   });
 
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { rawBody: true });
   const expressApp = app.getHttpAdapter().getInstance();
   expressApp.set('trust proxy', true);
 
@@ -58,7 +58,14 @@ async function bootstrap(){
     },
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Accept', 'Authorization', 'X-Requested-With'],
+    allowedHeaders: [
+      'Content-Type',
+      'Accept',
+      'Authorization',
+      'X-Requested-With',
+      'x-webhook-signature',
+      'x-webhook-timestamp',
+    ],
   });
   app.useGlobalPipes(new ValidationPipe({
     whitelist: true,
