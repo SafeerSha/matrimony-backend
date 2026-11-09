@@ -304,6 +304,45 @@ export class ConnectionsService {
     });
   }
 
+  async cancelInterest(senderId: string, rawReceiverId: string) {
+    const receiverId = await this.resolveUserId(rawReceiverId);
+    const connection = await this.prisma.connection.findFirst({
+      where: {
+        senderId,
+        receiverId,
+        status: 'PENDING',
+      },
+    });
+
+    if (!connection) {
+      throw new NotFoundException('Pending interest request not found');
+    }
+
+    // Delete the pending connection so the user is free to interact again later
+    await this.prisma.connection.delete({
+      where: { id: connection.id },
+    });
+
+    // Clean up corresponding notification for the recipient
+    try {
+      await this.prisma.notification.deleteMany({
+        where: {
+          userId: receiverId,
+          type: 'NEW_INTEREST',
+          referenceId: senderId,
+        },
+      });
+    } catch {
+      // Ignore notification cleanup errors
+    }
+
+    return {
+      success: true,
+      message: 'Interest request successfully cancelled',
+      targetId: receiverId,
+    };
+  }
+
   private async addFavoriteId(userId: string, targetId: string) {
     try {
       const profile = await this.prisma.profile.findUnique({

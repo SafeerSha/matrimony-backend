@@ -16,6 +16,16 @@ export class ConnectionsController {
     return this.connectionsService.sendInterest(user.sub, targetId);
   }
 
+  @Delete('interest/:userId')
+  async cancelInterest(@CurrentUser() user: any, @Param('userId') targetId: string) {
+    return this.connectionsService.cancelInterest(user.sub, targetId);
+  }
+
+  @Post('cancel/:userId')
+  async cancelInterestPost(@CurrentUser() user: any, @Param('userId') targetId: string) {
+    return this.connectionsService.cancelInterest(user.sub, targetId);
+  }
+
   @Post('accept/:userId')
   async acceptInterest(@CurrentUser() user: any, @Param('userId') senderId: string) {
     return this.connectionsService.acceptInterest(user.sub, senderId);
