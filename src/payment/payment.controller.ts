@@ -87,6 +87,19 @@ export class PaymentController {
   }
 
   /**
+   * User transaction history: Lists all payment attempts, successes, and cancellations.
+   */
+  @ApiOperation({ summary: 'Get user payment transaction history' })
+  @ApiBearerAuth('JWT-auth')
+  @UseGuards(JwtAuthGuard)
+  @Get('transactions')
+  async getUserTransactions(@CurrentUser() user: any) {
+    const userId = user?.sub || user?.id;
+    this.logger.log(`[PaymentController] GET /payments/transactions requested by user ${userId}`);
+    return this.paymentService.getUserTransactions(userId);
+  }
+
+  /**
    * Fallback verification endpoint: Frontend calls this after gateway redirection.
    */
   @ApiOperation({ summary: 'Verify Cashfree order payment status directly' })

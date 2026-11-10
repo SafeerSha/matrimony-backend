@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionService, SUBSCRIPTION_PLANS } from '../subscription/subscription.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import * as crypto from 'crypto';
 
 export interface ConfigServiceLike {
@@ -32,8 +33,39 @@ export class PaymentService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly subscriptionService: SubscriptionService,
+    @Optional() private readonly notificationsService?: NotificationsService,
     @Optional() private readonly configService?: ConfigServiceLike,
   ) {}
+
+  private async sendPaymentNotification(
+    userId: string,
+    type: 'PAYMENT_SUCCESS' | 'PAYMENT_FAILED' | 'PAYMENT_PENDING',
+    content: string,
+    orderId: string,
+  ) {
+    if (!this.notificationsService) return;
+    try {
+      // Prevent duplicate notification for same orderId & type
+      const existing = await this.prisma.notification.findFirst({
+        where: {
+          userId,
+          type,
+          referenceId: orderId,
+        },
+      });
+      if (existing) return;
+
+      await this.notificationsService.createNotification(
+        userId,
+        type,
+        content,
+        orderId,
+      );
+      this.logger.log(`[PaymentService] Notification created: type=${type}, userId=${userId}, orderId=${orderId}`);
+    } catch (err: any) {
+      this.logger.error(`[PaymentService] Failed to send payment notification: ${err?.message}`);
+    }
+  }
 
   private getCashfreeConfig() {
     const appId =
@@ -143,6 +175,28 @@ export class PaymentService {
         `Cashfree credentials not found. Simulating development order: ${orderId} for ₹${plan.price}`,
       );
 
+      try {
+        await (this.prisma as any).paymentTransaction.upsert({
+          where: { orderId },
+          create: {
+            userId,
+            orderId,
+            cfOrderId: `sim_${Date.now()}`,
+            planCode: resolvedPlanCode,
+            planName: plan.name,
+            amount: plan.price,
+            currency: 'INR',
+            status: 'PENDING',
+            paymentMessage: 'Simulated order initiated',
+          },
+          update: {
+            status: 'PENDING',
+          },
+        });
+      } catch (err: any) {
+        this.logger.error(`[PaymentService] Failed to record simulated transaction: ${err?.message}`);
+      }
+
       return {
         cfOrderId: `sim_${Date.now()}`,
         orderId,
@@ -200,6 +254,29 @@ export class PaymentService {
       this.logger.log(
         `[PaymentService] Cashfree order created successfully: orderId=${data.order_id}, cfOrderId=${data.cf_order_id}, status=${data.order_status}`,
       );
+
+      try {
+        await (this.prisma as any).paymentTransaction.upsert({
+          where: { orderId: data.order_id },
+          create: {
+            userId,
+            orderId: data.order_id,
+            cfOrderId: data.cf_order_id ? String(data.cf_order_id) : undefined,
+            planCode: resolvedPlanCode,
+            planName: plan.name,
+            amount: plan.price,
+            currency: 'INR',
+            status: 'PENDING',
+            paymentMessage: 'Order initiated, awaiting payment',
+          },
+          update: {
+            cfOrderId: data.cf_order_id ? String(data.cf_order_id) : undefined,
+            status: 'PENDING',
+          },
+        });
+      } catch (err: any) {
+        this.logger.error(`[PaymentService] Failed to record live transaction: ${err?.message}`);
+      }
 
       return {
         cfOrderId: data.cf_order_id,
@@ -377,6 +454,29 @@ export class PaymentService {
           },
         );
 
+        // Update transaction and trigger in-app notification
+        try {
+          await (this.prisma as any).paymentTransaction.updateMany({
+            where: { orderId },
+            data: {
+              status: 'SUCCESS',
+              cfPaymentId,
+              amount: paymentAmount,
+              paymentMethod: payment.payment_group || 'ONLINE',
+              paymentMessage: 'Payment verified via webhook',
+            },
+          });
+        } catch (e: any) {
+          this.logger.error(`[PaymentService] Failed to update transaction on webhook: ${e?.message}`);
+        }
+
+        await this.sendPaymentNotification(
+          userId,
+          'PAYMENT_SUCCESS',
+          `Your payment of ₹${paymentAmount} was successful! Chat permit activated.`,
+          orderId,
+        );
+
         this.logger.log(
           `Chat permit activated successfully via Cashfree Webhook for user ${userId} (Plan: ${planCode}, Payment: ${cfPaymentId})`,
         );
@@ -389,6 +489,29 @@ export class PaymentService {
         const orderId = eventData.order?.order_id;
         const reason = eventData.payment?.payment_message || 'Payment failed';
         this.logger.warn(`Cashfree payment failed for order ${orderId}: ${reason}`);
+
+        if (orderId) {
+          try {
+            await (this.prisma as any).paymentTransaction.updateMany({
+              where: { orderId },
+              data: {
+                status: 'FAILED',
+                paymentMessage: reason,
+              },
+            });
+            const tx = await (this.prisma as any).paymentTransaction.findUnique({ where: { orderId } });
+            if (tx?.userId) {
+              await this.sendPaymentNotification(
+                tx.userId,
+                'PAYMENT_FAILED',
+                `Payment for ${tx.planName || 'permit'} was unsuccessful: ${reason}`,
+                orderId,
+              );
+            }
+          } catch (e: any) {
+            this.logger.error(`[PaymentService] Failed to record failure event: ${e?.message}`);
+          }
+        }
         return { success: true, message: 'Failure event recorded' };
       }
 
@@ -396,6 +519,19 @@ export class PaymentService {
       case 'USER_DROPPED': {
         const orderId = eventData.order?.order_id;
         this.logger.log(`Cashfree payment dropped by user for order ${orderId}`);
+        if (orderId) {
+          try {
+            await (this.prisma as any).paymentTransaction.updateMany({
+              where: { orderId },
+              data: {
+                status: 'USER_DROPPED',
+                paymentMessage: 'Customer dismissed payment window',
+              },
+            });
+          } catch (e: any) {
+            this.logger.error(`[PaymentService] Failed to record drop event: ${e?.message}`);
+          }
+        }
         return { success: true, message: 'Drop event recorded' };
       }
 
@@ -403,6 +539,19 @@ export class PaymentService {
       case 'PAYMENT_PENDING': {
         const orderId = eventData.order?.order_id;
         this.logger.log(`Cashfree payment is pending confirmation for order ${orderId}`);
+        if (orderId) {
+          try {
+            await (this.prisma as any).paymentTransaction.updateMany({
+              where: { orderId },
+              data: {
+                status: 'PENDING',
+                paymentMessage: 'Payment awaiting bank confirmation',
+              },
+            });
+          } catch (e: any) {
+            this.logger.error(`[PaymentService] Failed to record pending event: ${e?.message}`);
+          }
+        }
         return { success: true, message: 'Pending status recorded' };
       }
 
@@ -505,6 +654,33 @@ export class PaymentService {
         this.logger.log(
           `[PaymentService] Order ${orderId} verified as SUCCESS. Payment: ${cfPaymentId}, Amount: ₹${amount}, User: ${userId}`,
         );
+
+        // Update transaction table
+        try {
+          await (this.prisma as any).paymentTransaction.updateMany({
+            where: { orderId },
+            data: {
+              status: 'SUCCESS',
+              cfPaymentId,
+              amount,
+              paymentMethod: successfulPayment.payment_group || 'ONLINE',
+              paymentMessage: 'Payment verified successfully',
+            },
+          });
+        } catch (e: any) {
+          this.logger.error(`[PaymentService] Failed to update transaction record: ${e?.message}`);
+        }
+
+        // Trigger in-app notification
+        const tx = await (this.prisma as any).paymentTransaction.findUnique({ where: { orderId } }).catch(() => null);
+        const planTitle = tx?.planName || 'Chat Permit';
+        await this.sendPaymentNotification(
+          userId,
+          'PAYMENT_SUCCESS',
+          `Your payment of ₹${amount} for ${planTitle} was successful! Chat permit activated.`,
+          orderId,
+        );
+
         return {
           orderId,
           paymentStatus: 'SUCCESS',
@@ -515,6 +691,19 @@ export class PaymentService {
 
       if (paymentList.length === 0) {
         this.logger.log(`[PaymentService] Order ${orderId} verified: No payment attempt recorded (USER_DROPPED)`);
+
+        try {
+          await (this.prisma as any).paymentTransaction.updateMany({
+            where: { orderId },
+            data: {
+              status: 'USER_DROPPED',
+              paymentMessage: 'Session dismissed before attempting payment',
+            },
+          });
+        } catch (e: any) {
+          this.logger.error(`[PaymentService] Failed to update dropped transaction: ${e?.message}`);
+        }
+
         return {
           orderId,
           paymentStatus: 'USER_DROPPED',
@@ -530,6 +719,18 @@ export class PaymentService {
       );
 
       if (rawStatus === 'USER_DROPPED' || rawStatus === 'CANCELLED') {
+        try {
+          await (this.prisma as any).paymentTransaction.updateMany({
+            where: { orderId },
+            data: {
+              status: 'USER_DROPPED',
+              paymentMessage: latestPayment?.payment_message || 'Customer cancelled checkout',
+            },
+          });
+        } catch (e: any) {
+          this.logger.error(`[PaymentService] Failed to update cancelled transaction: ${e?.message}`);
+        }
+
         return {
           orderId,
           paymentStatus: 'USER_DROPPED',
@@ -538,12 +739,58 @@ export class PaymentService {
       }
 
       if (rawStatus === 'FAILED' || rawStatus === 'DECLINED') {
+        const failureReason = latestPayment?.payment_message || 'Payment failed or was declined by the bank.';
+        try {
+          await (this.prisma as any).paymentTransaction.updateMany({
+            where: { orderId },
+            data: {
+              status: 'FAILED',
+              cfPaymentId: latestPayment?.cf_payment_id ? String(latestPayment.cf_payment_id) : undefined,
+              paymentMethod: latestPayment?.payment_group || 'ONLINE',
+              paymentMessage: failureReason,
+            },
+          });
+        } catch (e: any) {
+          this.logger.error(`[PaymentService] Failed to update failed transaction: ${e?.message}`);
+        }
+
+        const tx = await (this.prisma as any).paymentTransaction.findUnique({ where: { orderId } }).catch(() => null);
+        const planTitle = tx?.planName || 'Chat Permit';
+        await this.sendPaymentNotification(
+          userId,
+          'PAYMENT_FAILED',
+          `Your payment for ${planTitle} could not be completed: ${failureReason}`,
+          orderId,
+        );
+
         return {
           orderId,
           paymentStatus: 'FAILED',
-          message: latestPayment?.payment_message || 'Payment failed or was declined by the bank.',
+          message: failureReason,
         };
       }
+
+      // Still PENDING
+      try {
+        await (this.prisma as any).paymentTransaction.updateMany({
+          where: { orderId },
+          data: {
+            status: 'PENDING',
+            paymentMessage: latestPayment?.payment_message || 'Awaiting confirmation from bank',
+          },
+        });
+      } catch (e: any) {
+        this.logger.error(`[PaymentService] Failed to update pending transaction: ${e?.message}`);
+      }
+
+      const tx = await (this.prisma as any).paymentTransaction.findUnique({ where: { orderId } }).catch(() => null);
+      const planTitle = tx?.planName || 'Chat Permit';
+      await this.sendPaymentNotification(
+        userId,
+        'PAYMENT_PENDING',
+        `Your payment for ${planTitle} (Ref: ${orderId}) is awaiting bank settlement.`,
+        orderId,
+      );
 
       return {
         orderId,
@@ -556,6 +803,22 @@ export class PaymentService {
       if (err instanceof BadRequestException) throw err;
       this.logger.error(`Error verifying order ${orderId}: ${err?.message}`);
       throw new BadRequestException('Failed to check payment status.');
+    }
+  }
+
+  /**
+   * Retrieves the transaction history for a user.
+   */
+  async getUserTransactions(userId: string) {
+    try {
+      return await (this.prisma as any).paymentTransaction.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      });
+    } catch (err: any) {
+      this.logger.error(`[PaymentService] Failed to query transactions for user ${userId}: ${err?.message}`);
+      return [];
     }
   }
 }
