@@ -44,7 +44,7 @@ RUN apk add --no-cache libc6-compat openssl
 RUN mkdir -p /app/uploads && chown -R node:node /app
 
 # Copy dependencies, compiled code, Prisma files and entrypoint
-COPY --from=dependencies /app/node_modules ./node_modules
+COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/package*.json ./
