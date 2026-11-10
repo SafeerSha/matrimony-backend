@@ -1,8 +1,9 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException, forwardRef, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { STORAGE_SERVICE, StorageService } from '../storage/storage.interface';
 import { SubscriptionService } from '../subscription/subscription.service';
+import { ChatGateway } from '../chat/chat.gateway';
 import type { AdminUserQueryDto, AssignPlanBodyDto } from './dto/user-query.dto';
 
 /** Shared select for admin user list — never expose credential fields */
@@ -66,6 +67,9 @@ export class AdminService {
     private readonly prisma: PrismaService,
     @Inject(STORAGE_SERVICE) private readonly storageService: StorageService,
     private readonly subscriptionService: SubscriptionService,
+    @Inject(forwardRef(() => ChatGateway))
+    @Optional()
+    private readonly chatGateway?: ChatGateway,
   ) {}
 
   async getUsers(params: AdminUserQueryDto = {}) {
@@ -139,8 +143,19 @@ export class AdminService {
       this.prisma.user.count({ where }),
     ]);
 
+    const mappedUsers = users.map((u) => {
+      const isSocketOnline = this.chatGateway ? this.chatGateway.isUserOnline(u.id) : false;
+      const isRecentlyActive = u.lastActiveAt
+        ? Date.now() - new Date(u.lastActiveAt).getTime() < 3 * 60 * 1000
+        : false;
+      return {
+        ...u,
+        isOnline: isSocketOnline || isRecentlyActive,
+      };
+    });
+
     return {
-      data: users,
+      data: mappedUsers,
       meta: {
         total,
         page,
