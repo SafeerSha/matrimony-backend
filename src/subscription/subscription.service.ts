@@ -891,6 +891,29 @@ export class SubscriptionService {
   }
 
   /**
+   * Auto-healing table creation helper to ensure ContactUnlock table and indexes exist
+   */
+  async ensureContactUnlockTable(): Promise<void> {
+    try {
+      await this.prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS "ContactUnlock" (
+            "id" TEXT NOT NULL,
+            "userId" TEXT NOT NULL,
+            "targetUserId" TEXT NOT NULL,
+            "unlockedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT "ContactUnlock_pkey" PRIMARY KEY ("id")
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS "ContactUnlock_userId_targetUserId_key" ON "ContactUnlock"("userId", "targetUserId");
+        CREATE INDEX IF NOT EXISTS "ContactUnlock_userId_idx" ON "ContactUnlock"("userId");
+        CREATE INDEX IF NOT EXISTS "ContactUnlock_targetUserId_idx" ON "ContactUnlock"("targetUserId");
+      `);
+      this.logger.log('ContactUnlock table verified and ensured.');
+    } catch (e: any) {
+      this.logger.warn(`Could not ensure ContactUnlock table: ${e?.message}`);
+    }
+  }
+
+  /**
    * Resilient helper to find an unlock record using either Prisma delegate or Raw SQL
    */
   private async findContactUnlockRecord(userId: string, targetUserId: string): Promise<{ id: string } | null> {
@@ -918,7 +941,9 @@ export class SubscriptionService {
       `;
       return rows && rows.length > 0 ? rows[0] : null;
     } catch (err: any) {
-      this.logger.error(`[findContactUnlockRecord] Fallback raw SQL failed: ${err?.message}`);
+      if (err?.code === '42P01' || err?.message?.includes('does not exist')) {
+        await this.ensureContactUnlockTable();
+      }
       return null;
     }
   }
@@ -937,6 +962,16 @@ export class SubscriptionService {
         ON CONFLICT ("userId", "targetUserId") DO NOTHING;
       `;
     } catch (err: any) {
+      if (err?.code === '42P01' || err?.message?.includes('does not exist')) {
+        await this.ensureContactUnlockTable();
+        const id = randomUUID();
+        await client.$executeRaw`
+          INSERT INTO "ContactUnlock" ("id", "userId", "targetUserId", "unlockedAt")
+          VALUES (${id}, ${userId}, ${targetUserId}, NOW())
+          ON CONFLICT ("userId", "targetUserId") DO NOTHING;
+        `;
+        return;
+      }
       this.logger.error(`[recordContactUnlock] Raw SQL insert failed: ${err?.message}`, err?.stack);
       throw err;
     }
@@ -1188,6 +1223,10 @@ export class SubscriptionService {
         avatarUrl: r.avatarUrl || '',
       }));
     } catch (err: any) {
+      if (err?.code === '42P01' || err?.message?.includes('does not exist')) {
+        await this.ensureContactUnlockTable();
+        return [];
+      }
       this.logger.error(`[getUnlockedContacts] Error: ${err?.message}`, err?.stack);
       if (err instanceof HttpException) throw err;
       throw new InternalServerErrorException(`Failed to retrieve unlocked contacts: ${err?.message || err}`);
