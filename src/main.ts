@@ -34,22 +34,48 @@ async function bootstrap(){
   );
   app.use(cookieParser());
   const allowedOrigins = process.env.CORS_ORIGINS;
+  const configuredOrigins = allowedOrigins
+    ? allowedOrigins.split(',').map((o) => o.trim().toLowerCase()).filter(Boolean)
+    : [];
+
   app.enableCors({
     origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
       // Allow requests with no origin (mobile apps, server-to-server, curl)
       if (!origin) return callback(null, true);
 
-      if (allowedOrigins === '*' || allowedOrigins?.split(',').map((o) => o.trim()).includes(origin)) {
+      const lowerOrigin = origin.toLowerCase().trim();
+
+      // Wildcard or explicit match in configured origins
+      if (allowedOrigins === '*' || configuredOrigins.includes('*') || configuredOrigins.includes(lowerOrigin)) {
         return callback(null, true);
+      }
+
+      // Always allow primary domain and all subdomains (e.g. ishtamchat.com, www.ishtamchat.com, api.ishtamchat.com)
+      if (/^https?:\/\/([a-z0-9-]+\.)*ishtamchat\.com(:[0-9]+)?$/i.test(lowerOrigin)) {
+        return callback(null, true);
+      }
+
+      // Allow Vercel preview and production deployments
+      if (/^https?:\/\/([a-z0-9-]+\.)*vercel\.app(:[0-9]+)?$/i.test(lowerOrigin)) {
+        return callback(null, true);
+      }
+
+      // Interchangeably match apex and www for any configured origin (e.g. www.domain.com <-> domain.com)
+      for (const conf of configuredOrigins) {
+        const confHost = conf.replace(/^https?:\/\//i, '').replace(/^www\./i, '');
+        const originHost = lowerOrigin.replace(/^https?:\/\//i, '').replace(/^www\./i, '');
+        if (confHost && confHost === originHost) {
+          return callback(null, true);
+        }
       }
 
       // In development or local testing, allow localhost/127.0.0.1 and local subnet origins
       if (
         process.env.NODE_ENV !== 'production' ||
-        origin.startsWith('http://localhost:') ||
-        origin.startsWith('http://127.0.0.1:') ||
-        origin.startsWith('http://10.') ||
-        origin.startsWith('http://192.168.')
+        lowerOrigin.startsWith('http://localhost:') ||
+        lowerOrigin.startsWith('http://127.0.0.1:') ||
+        lowerOrigin.startsWith('http://10.') ||
+        lowerOrigin.startsWith('http://192.168.')
       ) {
         return callback(null, true);
       }
@@ -65,6 +91,10 @@ async function bootstrap(){
       'X-Requested-With',
       'x-webhook-signature',
       'x-webhook-timestamp',
+      'Cache-Control',
+      'Pragma',
+      'sentry-trace',
+      'baggage',
     ],
   });
   app.useGlobalPipes(new ValidationPipe({
