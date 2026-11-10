@@ -473,6 +473,7 @@ export class ProfilesService {
         isDeclinedByThem,
         isDeclinedByMe,
         isContactUnlocked,
+        hasPhone: Boolean(profile.user?.phone),
         phone: isContactUnlocked ? profile.user?.phone : undefined,
       };
     } catch (error: any) {
