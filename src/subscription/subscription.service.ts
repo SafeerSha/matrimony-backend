@@ -638,78 +638,107 @@ export class SubscriptionService {
 
     const plan = dbPlan || SUBSCRIPTION_PLANS.find((p) => p.id === normalizedTier) || SUBSCRIPTION_PLANS[0];
 
-    const now = new Date();
-    const existing = await this.prisma.subscription.findUnique({
-      where: { userId },
-    });
-
-    // If existing permit is still active, extend it by the plan's duration
-    const baseDate = existing?.expiresAt && new Date(existing.expiresAt) > now
-      ? new Date(existing.expiresAt)
-      : now;
-
-    const durationDays = customDurationDays && customDurationDays > 0 ? customDurationDays : plan.durationDays;
-    const expiresAt = new Date(baseDate.getTime() + durationDays * 24 * 60 * 60 * 1000);
-
     const planCode = (plan as any).code || plan.id;
 
-    const subscription = await this.prisma.subscription.upsert({
-      where: { userId },
-      create: {
-        userId,
-        tier: planCode,
-        status: 'ACTIVE',
-        canChat: true,
-        expiresAt,
-        contactCredits: plan.contactCredits,
-        dailyInterestsLimit: plan.dailyInterestsLimit,
-        paymentId: paymentDetails?.paymentId || (isAdminGrant ? `ADMIN-GRANT-${Date.now()}` : `DEMO-${Date.now()}`),
-        amountPaid: paymentDetails?.amount || (isAdminGrant ? 0 : plan.price),
-      },
-      update: {
-        tier: planCode,
-        status: 'ACTIVE',
-        canChat: true,
-        expiresAt,
-        contactCredits: { increment: plan.contactCredits },
-        dailyInterestsLimit: plan.dailyInterestsLimit,
-        paymentId: paymentDetails?.paymentId || existing?.paymentId || (isAdminGrant ? `ADMIN-GRANT-${Date.now()}` : undefined),
-        amountPaid: paymentDetails?.amount || plan.price,
-      },
-    });
+    this.logger.log(
+      `[SubscriptionService] activatePermit requested: user=${userId}, plan=${normalizedTier}, source=${isAdminGrant ? 'ADMIN' : paymentDetails?.paymentId ? 'GATEWAY' : 'MANUAL_ACTIVATION'}, paymentId=${paymentDetails?.paymentId || 'NONE'}, amount=₹${paymentDetails?.amount || plan.price}`,
+    );
 
-    // Record subscription event for audit trail
-    try {
-      await this.prisma.subscriptionEvent.create({
-        data: {
-          id: `sub-evt-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    // Execute atomic transaction to prevent concurrent dual-activation race condition
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.subscription.findUnique({
+        where: { userId },
+      });
+
+      // Strict Idempotency & Concurrency Guard:
+      // If this exact gateway paymentId was already applied by a concurrent webhook or redirect, skip.
+      if (
+        paymentDetails?.paymentId &&
+        existing?.paymentId === paymentDetails.paymentId &&
+        existing?.status === 'ACTIVE'
+      ) {
+        this.logger.log(
+          `[SubscriptionService] Idempotency trigger: Payment ${paymentDetails.paymentId} was already activated for user ${userId}. Idempotent exit.`,
+        );
+        return {
+          success: true,
+          message: `Chat permit already active for ${plan.name}`,
+          subscription: existing,
+        };
+      }
+
+      const now = new Date();
+      // If existing permit is still active, extend it by the plan's duration
+      const baseDate = existing?.expiresAt && new Date(existing.expiresAt) > now
+        ? new Date(existing.expiresAt)
+        : now;
+
+      const durationDays = customDurationDays && customDurationDays > 0 ? customDurationDays : plan.durationDays;
+      const expiresAt = new Date(baseDate.getTime() + durationDays * 24 * 60 * 60 * 1000);
+
+      const subscription = await tx.subscription.upsert({
+        where: { userId },
+        create: {
           userId,
-          fromTier: existing?.tier || 'FREE',
-          toTier: planCode,
-          source: isAdminGrant ? 'ADMIN' : paymentDetails?.paymentId ? 'GATEWAY' : 'MANUAL_ACTIVATION',
+          tier: planCode,
+          status: 'ACTIVE',
+          canChat: true,
+          expiresAt,
+          contactCredits: plan.contactCredits,
+          dailyInterestsLimit: plan.dailyInterestsLimit,
+          paymentId: paymentDetails?.paymentId || (isAdminGrant ? `ADMIN-GRANT-${Date.now()}` : `DEMO-${Date.now()}`),
+          amountPaid: paymentDetails?.amount || (isAdminGrant ? 0 : plan.price),
+        },
+        update: {
+          tier: planCode,
+          status: 'ACTIVE',
+          canChat: true,
+          expiresAt,
+          contactCredits: { increment: plan.contactCredits },
+          dailyInterestsLimit: plan.dailyInterestsLimit,
+          paymentId: paymentDetails?.paymentId || existing?.paymentId || (isAdminGrant ? `ADMIN-GRANT-${Date.now()}` : undefined),
+          amountPaid: paymentDetails?.amount || plan.price,
         },
       });
 
-      // Keep User.subscriptionTier in sync
-      await this.prisma.user.update({
-        where: { id: userId },
-        data: { subscriptionTier: planCode },
-      });
-    } catch (e: any) {
-      this.logger.warn(`Could not log subscription audit event: ${e?.message}`);
-    }
+      this.logger.log(
+        `[SubscriptionService] Chat permit committed in DB: user=${userId}, tier=${planCode}, creditsAdded=+${plan.contactCredits}, expiresAt=${expiresAt.toISOString()}`,
+      );
 
-    return {
-      success: true,
-      message: `Chat permit activated successfully for ${plan.name}`,
-      subscription,
-    };
+      // Record subscription event for audit trail
+      try {
+        await tx.subscriptionEvent.create({
+          data: {
+            id: `sub-evt-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+            userId,
+            fromTier: existing?.tier || 'FREE',
+            toTier: planCode,
+            source: isAdminGrant ? 'ADMIN' : paymentDetails?.paymentId ? 'GATEWAY' : 'MANUAL_ACTIVATION',
+          },
+        });
+
+        // Keep User.subscriptionTier in sync
+        await tx.user.update({
+          where: { id: userId },
+          data: { subscriptionTier: planCode },
+        });
+      } catch (e: any) {
+        this.logger.warn(`Could not log subscription audit event: ${e?.message}`);
+      }
+
+      return {
+        success: true,
+        message: `Chat permit activated successfully for ${plan.name}`,
+        subscription,
+      };
+    });
   }
 
   /**
    * Manually cancels or revokes a chat permit and resets user tier to BASIC.
    */
   async cancelChatPermit(userId: string) {
+    this.logger.log(`[SubscriptionService] cancelChatPermit initiated for user ${userId}`);
     const existing = await this.prisma.subscription.findUnique({
       where: { userId },
     });
@@ -725,6 +754,7 @@ export class SubscriptionService {
           expiresAt: new Date(),
         },
       });
+      this.logger.log(`[SubscriptionService] Subscription status set to CANCELLED for user ${userId}`);
     }
 
     await this.prisma.user.update({
@@ -782,6 +812,9 @@ export class SubscriptionService {
     });
 
     if (quota.interestsSent > limit) {
+      this.logger.warn(
+        `[SubscriptionService] Interest quota limit reached: user=${userId}, sentToday=${quota.interestsSent}, limit=${limit}`,
+      );
       return { allowed: false, remaining: 0 };
     }
 
@@ -945,14 +978,32 @@ export class SubscriptionService {
     const currentSub = sub;
     const isUnlimited = (currentSub.contactCredits || 0) >= 9000;
     if (!isUnlimited && (currentSub.contactCredits || 0) <= 0) {
+      this.logger.warn(`[SubscriptionService] unlockContact rejected: viewer ${viewerId} has exhausted credits.`);
       throw new ForbiddenException({
         code: 'CONTACT_CREDITS_EXHAUSTED',
         message: 'You have used all available contact credits. Please upgrade your permit to unlock more contact numbers.',
       });
     }
 
-    // Atomically create unlock record & decrement credit
+    this.logger.log(`[SubscriptionService] unlockContact requested: viewerId=${viewerId}, targetUserId=${targetUser.id}`);
+
+    // Atomically create unlock record & decrement credit inside transaction with concurrency guard
     return this.prisma.$transaction(async (tx) => {
+      // Re-verify current credits within the transaction lock to prevent concurrent double-spending
+      if (!isUnlimited) {
+        const freshSub = await tx.subscription.findUnique({
+          where: { id: currentSub.id },
+        });
+
+        if (!freshSub || (freshSub.contactCredits || 0) <= 0) {
+          this.logger.warn(`[SubscriptionService] Concurrent unlock blocked: viewer ${viewerId} has 0 credits remaining.`);
+          throw new ForbiddenException({
+            code: 'CONTACT_CREDITS_EXHAUSTED',
+            message: 'You have used all available contact credits. Please upgrade your permit to unlock more contact numbers.',
+          });
+        }
+      }
+
       await tx.contactUnlock.create({
         data: {
           userId: viewerId,
@@ -968,6 +1019,10 @@ export class SubscriptionService {
         });
         updatedCredits = updatedSub.contactCredits;
       }
+
+      this.logger.log(
+        `[SubscriptionService] Contact unlock SUCCESS: viewerId=${viewerId} unlocked targetUserId=${targetUser.id}. CreditsRemaining=${updatedCredits}`,
+      );
 
       return {
         success: true,

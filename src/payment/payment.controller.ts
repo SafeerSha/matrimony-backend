@@ -38,6 +38,7 @@ export class PaymentController {
   @Post('create-order')
   async createOrder(@CurrentUser() user: any, @Body() body: CreateOrderDto) {
     const userId = user?.sub || user?.id;
+    this.logger.log(`[PaymentController] POST /payments/create-order requested by user ${userId} for plan ${body.planCode}`);
     return this.paymentService.createOrder(userId, body.planCode);
   }
 
@@ -54,7 +55,9 @@ export class PaymentController {
     @Headers('x-webhook-signature') signature?: string,
     @Headers('x-webhook-timestamp') timestamp?: string,
   ) {
-    this.logger.log('Incoming payment webhook request received');
+    this.logger.log(
+      `[PaymentController] POST /payments/webhook received. Signature header: ${signature ? 'present' : 'missing'}, timestamp: ${timestamp || 'missing'}`,
+    );
 
     // 1. Extract raw body buffer/string
     const rawBody = req.rawBody || JSON.stringify(req.body || {});
@@ -67,12 +70,14 @@ export class PaymentController {
     );
 
     if (!isValid) {
-      this.logger.warn('Unauthorized webhook rejected: Invalid signature or timestamp');
+      this.logger.warn('[PaymentController] Unauthorized webhook rejected: Invalid signature or timestamp');
       throw new UnauthorizedException('Invalid webhook signature');
     }
 
     // 3. Process the verified event (Payment success / failure)
     const result = await this.paymentService.processWebhookEvent(req.body);
+
+    this.logger.log(`[PaymentController] Webhook processed successfully. Result: ${result.message}`);
 
     // 4. Return fast HTTP 200 OK so Cashfree acknowledges delivery
     return {
@@ -90,6 +95,7 @@ export class PaymentController {
   @Get('verify/:orderId')
   async verifyOrder(@CurrentUser() user: any, @Param('orderId') orderId: string) {
     const userId = user?.sub || user?.id;
+    this.logger.log(`[PaymentController] GET /payments/verify/${orderId} requested by user ${userId}`);
     return this.paymentService.verifyOrderPayment(userId, orderId);
   }
 }
