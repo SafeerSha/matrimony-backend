@@ -1,4 +1,13 @@
-import { Injectable, Logger, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+  InternalServerErrorException,
+  HttpException,
+} from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface PlanConfig {
@@ -835,44 +844,117 @@ export class SubscriptionService {
       ? raw.toUpperCase()
       : `IMC-${raw.toUpperCase()}`;
 
-    const user = await this.prisma.user.findFirst({
-      where: {
-        OR: [
-          { id: raw },
-          { profileId: raw },
-          { profileId: imcNormalized },
-          { profileId: { equals: raw, mode: 'insensitive' } },
-          { profileId: { equals: imcNormalized, mode: 'insensitive' } },
-          { profile: { id: raw } },
-        ],
-      },
-      select: {
-        id: true,
-        phone: true,
-        isPhoneVerified: true,
-        firstName: true,
-        lastName: true,
-        profileId: true,
-        profile: {
-          select: {
-            city: true,
-            state: true,
-            occupation: true,
+    try {
+      const user = await this.prisma.user.findFirst({
+        where: {
+          OR: [
+            { id: raw },
+            { profileId: raw },
+            { profileId: imcNormalized },
+            { profileId: { equals: raw, mode: 'insensitive' } },
+            { profileId: { equals: imcNormalized, mode: 'insensitive' } },
+            { profile: { id: raw } },
+          ],
+        },
+        select: {
+          id: true,
+          phone: true,
+          isPhoneVerified: true,
+          firstName: true,
+          lastName: true,
+          profileId: true,
+          profile: {
+            select: {
+              city: true,
+              state: true,
+              occupation: true,
+            },
+          },
+          photos: {
+            where: { isPrimary: true },
+            take: 1,
+            select: { url: true },
           },
         },
-        photos: {
-          where: { isPrimary: true },
-          take: 1,
-          select: { url: true },
-        },
-      },
-    });
+      });
 
-    if (!user) {
-      throw new NotFoundException('Profile or user not found');
+      if (!user) {
+        throw new NotFoundException('Profile or user not found');
+      }
+
+      return user;
+    } catch (err: any) {
+      if (err instanceof HttpException) throw err;
+      this.logger.error(`[resolveTargetUser] Error: ${err?.message}`, err?.stack);
+      throw new InternalServerErrorException(`Failed to resolve profile: ${err?.message || err}`);
+    }
+  }
+
+  /**
+   * Resilient helper to find an unlock record using either Prisma delegate or Raw SQL
+   */
+  private async findContactUnlockRecord(userId: string, targetUserId: string): Promise<{ id: string } | null> {
+    if ((this.prisma as any).contactUnlock?.findUnique) {
+      try {
+        const found = await this.prisma.contactUnlock.findUnique({
+          where: {
+            userId_targetUserId: {
+              userId,
+              targetUserId,
+            },
+          },
+        });
+        if (found) return found;
+      } catch (err: any) {
+        this.logger.warn(`[findContactUnlockRecord] Delegate query failed, falling back to raw SQL: ${err?.message}`);
+      }
     }
 
-    return user;
+    try {
+      const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM "ContactUnlock"
+        WHERE "userId" = ${userId} AND "targetUserId" = ${targetUserId}
+        LIMIT 1;
+      `;
+      return rows && rows.length > 0 ? rows[0] : null;
+    } catch (err: any) {
+      this.logger.error(`[findContactUnlockRecord] Fallback raw SQL failed: ${err?.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Resilient helper to record an unlock record using either Prisma delegate or Raw SQL
+   */
+  private async recordContactUnlock(userId: string, targetUserId: string, tx?: any): Promise<void> {
+    const client = tx || this.prisma;
+    if ((client as any).contactUnlock?.create) {
+      try {
+        await client.contactUnlock.create({
+          data: {
+            userId,
+            targetUserId,
+          },
+        });
+        return;
+      } catch (err: any) {
+        // Unique constraint violation (P2002) means it was already created, safe to proceed
+        if (err?.code === 'P2002') return;
+        this.logger.warn(`[recordContactUnlock] Delegate insert failed, falling back to raw SQL: ${err?.message}`);
+      }
+    }
+
+    try {
+      const id = randomUUID();
+      await client.$executeRaw`
+        INSERT INTO "ContactUnlock" ("id", "userId", "targetUserId", "unlockedAt")
+        VALUES (${id}, ${userId}, ${targetUserId}, NOW())
+        ON CONFLICT ("userId", "targetUserId") DO NOTHING;
+      `;
+    } catch (err: any) {
+      this.logger.error(`[recordContactUnlock] Fallback raw SQL insert failed: ${err?.message}`);
+      throw err;
+    }
   }
 
   /**
@@ -880,47 +962,46 @@ export class SubscriptionService {
    * and whether viewer has sufficient quota/credits to unlock.
    */
   async getContactStatus(viewerId: string, targetIdentifier: string) {
-    const targetUser = await this.resolveTargetUser(targetIdentifier);
-    const isSelf = viewerId === targetUser.id;
+    try {
+      const targetUser = await this.resolveTargetUser(targetIdentifier);
+      const isSelf = viewerId === targetUser.id;
 
-    if (isSelf) {
+      if (isSelf) {
+        return {
+          isUnlocked: true,
+          phone: targetUser.phone,
+          isSelf: true,
+          canUnlock: true,
+          creditsRemaining: 9999,
+          isUnlimited: true,
+        };
+      }
+
+      const existingUnlock = await this.findContactUnlockRecord(viewerId, targetUser.id);
+
+      const sub = await this.prisma.subscription.findUnique({ where: { userId: viewerId } });
+      const isSubscribed = Boolean(
+        sub && sub.status === 'ACTIVE' && sub.expiresAt && new Date(sub.expiresAt) > new Date(),
+      );
+
+      const creditsRemaining = sub?.contactCredits || 0;
+      const isUnlimited = creditsRemaining >= 9000;
+      const canUnlock = Boolean(isSubscribed && (creditsRemaining > 0 || isUnlimited));
+
       return {
-        isUnlocked: true,
-        phone: targetUser.phone,
-        isSelf: true,
-        canUnlock: true,
-        creditsRemaining: 9999,
-        isUnlimited: true,
+        isUnlocked: Boolean(existingUnlock),
+        phone: existingUnlock ? targetUser.phone : null,
+        isSelf: false,
+        canUnlock: Boolean(existingUnlock) || canUnlock,
+        creditsRemaining,
+        isUnlimited,
+        isSubscribed,
       };
+    } catch (err: any) {
+      this.logger.error(`[getContactStatus] Error: ${err?.message}`, err?.stack);
+      if (err instanceof HttpException) throw err;
+      throw new InternalServerErrorException(`Failed to check contact status: ${err?.message || err}`);
     }
-
-    const existingUnlock = await this.prisma.contactUnlock.findUnique({
-      where: {
-        userId_targetUserId: {
-          userId: viewerId,
-          targetUserId: targetUser.id,
-        },
-      },
-    });
-
-    const sub = await this.prisma.subscription.findUnique({ where: { userId: viewerId } });
-    const isSubscribed = Boolean(
-      sub && sub.status === 'ACTIVE' && sub.expiresAt && new Date(sub.expiresAt) > new Date(),
-    );
-
-    const creditsRemaining = sub?.contactCredits || 0;
-    const isUnlimited = creditsRemaining >= 9000;
-    const canUnlock = Boolean(isSubscribed && (creditsRemaining > 0 || isUnlimited));
-
-    return {
-      isUnlocked: Boolean(existingUnlock),
-      phone: existingUnlock ? targetUser.phone : null,
-      isSelf: false,
-      canUnlock: Boolean(existingUnlock) || canUnlock,
-      creditsRemaining,
-      isUnlimited,
-      isSubscribed,
-    };
   }
 
   /**
@@ -929,159 +1010,203 @@ export class SubscriptionService {
    * If new, verifies active permit, checks contactCredits > 0, decrements credit, and records unlock.
    */
   async unlockContact(viewerId: string, targetIdentifier: string) {
-    const targetUser = await this.resolveTargetUser(targetIdentifier);
+    try {
+      const targetUser = await this.resolveTargetUser(targetIdentifier);
 
-    if (viewerId === targetUser.id) {
-      return {
-        success: true,
-        phone: targetUser.phone,
-        alreadyUnlocked: true,
-        creditsRemaining: 9999,
-        isUnlimited: true,
-      };
-    }
+      if (viewerId === targetUser.id) {
+        return {
+          success: true,
+          phone: targetUser.phone,
+          alreadyUnlocked: true,
+          creditsRemaining: 9999,
+          isUnlimited: true,
+        };
+      }
 
-    // Check if already unlocked
-    const existing = await this.prisma.contactUnlock.findUnique({
-      where: {
-        userId_targetUserId: {
-          userId: viewerId,
-          targetUserId: targetUser.id,
-        },
-      },
-    });
+      // Check if already unlocked
+      const existing = await this.findContactUnlockRecord(viewerId, targetUser.id);
 
-    if (existing) {
+      if (existing) {
+        const sub = await this.prisma.subscription.findUnique({ where: { userId: viewerId } });
+        return {
+          success: true,
+          phone: targetUser.phone,
+          alreadyUnlocked: true,
+          creditsRemaining: sub?.contactCredits || 0,
+          isUnlimited: (sub?.contactCredits || 0) >= 9000,
+        };
+      }
+
+      // Verify permit & credits
       const sub = await this.prisma.subscription.findUnique({ where: { userId: viewerId } });
-      return {
-        success: true,
-        phone: targetUser.phone,
-        alreadyUnlocked: true,
-        creditsRemaining: sub?.contactCredits || 0,
-        isUnlimited: (sub?.contactCredits || 0) >= 9000,
-      };
-    }
-
-    // Verify permit & credits
-    const sub = await this.prisma.subscription.findUnique({ where: { userId: viewerId } });
-    const isSubscribed = Boolean(
-      sub && sub.status === 'ACTIVE' && sub.expiresAt && new Date(sub.expiresAt) > new Date(),
-    );
-
-    if (!sub || !isSubscribed) {
-      throw new ForbiddenException({
-        code: 'PERMIT_REQUIRED',
-        message: 'An active Chat Permit is required to unlock verified contact numbers.',
-      });
-    }
-
-    const currentSub = sub;
-    const isUnlimited = (currentSub.contactCredits || 0) >= 9000;
-    if (!isUnlimited && (currentSub.contactCredits || 0) <= 0) {
-      this.logger.warn(`[SubscriptionService] unlockContact rejected: viewer ${viewerId} has exhausted credits.`);
-      throw new ForbiddenException({
-        code: 'CONTACT_CREDITS_EXHAUSTED',
-        message: 'You have used all available contact credits. Please upgrade your permit to unlock more contact numbers.',
-      });
-    }
-
-    this.logger.log(`[SubscriptionService] unlockContact requested: viewerId=${viewerId}, targetUserId=${targetUser.id}`);
-
-    // Atomically create unlock record & decrement credit inside transaction with concurrency guard
-    return this.prisma.$transaction(async (tx) => {
-      // Re-verify current credits within the transaction lock to prevent concurrent double-spending
-      if (!isUnlimited) {
-        const freshSub = await tx.subscription.findUnique({
-          where: { id: currentSub.id },
-        });
-
-        if (!freshSub || (freshSub.contactCredits || 0) <= 0) {
-          this.logger.warn(`[SubscriptionService] Concurrent unlock blocked: viewer ${viewerId} has 0 credits remaining.`);
-          throw new ForbiddenException({
-            code: 'CONTACT_CREDITS_EXHAUSTED',
-            message: 'You have used all available contact credits. Please upgrade your permit to unlock more contact numbers.',
-          });
-        }
-      }
-
-      await tx.contactUnlock.create({
-        data: {
-          userId: viewerId,
-          targetUserId: targetUser.id,
-        },
-      });
-
-      let updatedCredits = currentSub.contactCredits;
-      if (!isUnlimited) {
-        const updatedSub = await tx.subscription.update({
-          where: { id: currentSub.id },
-          data: { contactCredits: { decrement: 1 } },
-        });
-        updatedCredits = updatedSub.contactCredits;
-      }
-
-      this.logger.log(
-        `[SubscriptionService] Contact unlock SUCCESS: viewerId=${viewerId} unlocked targetUserId=${targetUser.id}. CreditsRemaining=${updatedCredits}`,
+      const isSubscribed = Boolean(
+        sub && sub.status === 'ACTIVE' && sub.expiresAt && new Date(sub.expiresAt) > new Date(),
       );
 
-      return {
-        success: true,
-        phone: targetUser.phone,
-        alreadyUnlocked: false,
-        creditsRemaining: updatedCredits,
-        isUnlimited,
-      };
-    });
+      if (!sub || !isSubscribed) {
+        throw new ForbiddenException({
+          code: 'PERMIT_REQUIRED',
+          message: 'An active Chat Permit is required to unlock verified contact numbers.',
+        });
+      }
+
+      const currentSub = sub;
+      const isUnlimited = (currentSub.contactCredits || 0) >= 9000;
+      if (!isUnlimited && (currentSub.contactCredits || 0) <= 0) {
+        this.logger.warn(`[SubscriptionService] unlockContact rejected: viewer ${viewerId} has exhausted credits.`);
+        throw new ForbiddenException({
+          code: 'CONTACT_CREDITS_EXHAUSTED',
+          message: 'You have used all available contact credits. Please upgrade your permit to unlock more contact numbers.',
+        });
+      }
+
+      this.logger.log(`[SubscriptionService] unlockContact requested: viewerId=${viewerId}, targetUserId=${targetUser.id}`);
+
+      // Atomically create unlock record & decrement credit inside transaction with concurrency guard
+      return await this.prisma.$transaction(async (tx) => {
+        // Re-verify current credits within the transaction lock to prevent concurrent double-spending
+        if (!isUnlimited) {
+          const freshSub = await tx.subscription.findUnique({
+            where: { id: currentSub.id },
+          });
+
+          if (!freshSub || (freshSub.contactCredits || 0) <= 0) {
+            this.logger.warn(`[SubscriptionService] Concurrent unlock blocked: viewer ${viewerId} has 0 credits remaining.`);
+            throw new ForbiddenException({
+              code: 'CONTACT_CREDITS_EXHAUSTED',
+              message: 'You have used all available contact credits. Please upgrade your permit to unlock more contact numbers.',
+            });
+          }
+        }
+
+        await this.recordContactUnlock(viewerId, targetUser.id, tx);
+
+        let updatedCredits = currentSub.contactCredits;
+        if (!isUnlimited) {
+          const updatedSub = await tx.subscription.update({
+            where: { id: currentSub.id },
+            data: { contactCredits: { decrement: 1 } },
+          });
+          updatedCredits = updatedSub.contactCredits;
+        }
+
+        this.logger.log(
+          `[SubscriptionService] Contact unlock SUCCESS: viewerId=${viewerId} unlocked targetUserId=${targetUser.id}. CreditsRemaining=${updatedCredits}`,
+        );
+
+        return {
+          success: true,
+          phone: targetUser.phone,
+          alreadyUnlocked: false,
+          creditsRemaining: updatedCredits,
+          isUnlimited,
+        };
+      });
+    } catch (err: any) {
+      this.logger.error(`[unlockContact] Error: ${err?.message}`, err?.stack);
+      if (err instanceof HttpException) throw err;
+      throw new InternalServerErrorException(`Failed to unlock contact: ${err?.message || err}`);
+    }
   }
 
   /**
    * List all verified contacts unlocked by the user.
    */
   async getUnlockedContacts(viewerId: string) {
-    const unlocks = await this.prisma.contactUnlock.findMany({
-      where: { userId: viewerId },
-      orderBy: { unlockedAt: 'desc' },
-      include: {
-        targetUser: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            profileId: true,
-            phone: true,
-            isPhoneVerified: true,
-            profile: {
-              select: {
-                city: true,
-                state: true,
-                occupation: true,
-                education: true,
+    try {
+      if ((this.prisma as any).contactUnlock?.findMany) {
+        try {
+          const unlocks = await this.prisma.contactUnlock.findMany({
+            where: { userId: viewerId },
+            orderBy: { unlockedAt: 'desc' },
+            include: {
+              targetUser: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  profileId: true,
+                  phone: true,
+                  isPhoneVerified: true,
+                  profile: {
+                    select: {
+                      city: true,
+                      state: true,
+                      occupation: true,
+                      education: true,
+                    },
+                  },
+                  photos: {
+                    where: { isPrimary: true },
+                    take: 1,
+                    select: { url: true },
+                  },
+                },
               },
             },
-            photos: {
-              where: { isPrimary: true },
-              take: 1,
-              select: { url: true },
-            },
-          },
-        },
-      },
-    });
+          });
 
-    return unlocks.map((u) => ({
-      unlockId: u.id,
-      unlockedAt: u.unlockedAt,
-      userId: u.targetUser.id,
-      profileId: u.targetUser.profileId,
-      name: `${u.targetUser.firstName || ''} ${u.targetUser.lastName || ''}`.trim() || 'Member',
-      phone: u.targetUser.phone,
-      isPhoneVerified: u.targetUser.isPhoneVerified,
-      city: u.targetUser.profile?.city,
-      state: u.targetUser.profile?.state,
-      occupation: u.targetUser.profile?.occupation,
-      education: u.targetUser.profile?.education,
-      avatarUrl: u.targetUser.photos?.[0]?.url || '',
-    }));
+          return unlocks.map((u) => ({
+            unlockId: u.id,
+            unlockedAt: u.unlockedAt,
+            userId: u.targetUser.id,
+            profileId: u.targetUser.profileId,
+            name: `${u.targetUser.firstName || ''} ${u.targetUser.lastName || ''}`.trim() || 'Member',
+            phone: u.targetUser.phone,
+            isPhoneVerified: u.targetUser.isPhoneVerified,
+            city: u.targetUser.profile?.city,
+            state: u.targetUser.profile?.state,
+            occupation: u.targetUser.profile?.occupation,
+            education: u.targetUser.profile?.education,
+            avatarUrl: u.targetUser.photos?.[0]?.url || '',
+          }));
+        } catch (err: any) {
+          this.logger.warn(`[getUnlockedContacts] Delegate query failed, falling back to raw SQL: ${err?.message}`);
+        }
+      }
+
+      const rows = await this.prisma.$queryRaw<any[]>`
+        SELECT 
+          cu.id as "unlockId",
+          cu."unlockedAt",
+          u.id as "userId",
+          u."profileId",
+          u."firstName",
+          u."lastName",
+          u.phone,
+          u."isPhoneVerified",
+          p.city,
+          p.state,
+          p.occupation,
+          p.education,
+          ph.url as "avatarUrl"
+        FROM "ContactUnlock" cu
+        JOIN "User" u ON cu."targetUserId" = u.id
+        LEFT JOIN "Profile" p ON p."userId" = u.id
+        LEFT JOIN "Photo" ph ON ph."userId" = u.id AND ph."isPrimary" = true
+        WHERE cu."userId" = ${viewerId}
+        ORDER BY cu."unlockedAt" DESC;
+      `;
+
+      return (rows || []).map((r) => ({
+        unlockId: r.unlockId,
+        unlockedAt: r.unlockedAt,
+        userId: r.userId,
+        profileId: r.profileId,
+        name: `${r.firstName || ''} ${r.lastName || ''}`.trim() || 'Member',
+        phone: r.phone,
+        isPhoneVerified: Boolean(r.isPhoneVerified),
+        city: r.city,
+        state: r.state,
+        occupation: r.occupation,
+        education: r.education,
+        avatarUrl: r.avatarUrl || '',
+      }));
+    } catch (err: any) {
+      this.logger.error(`[getUnlockedContacts] Error: ${err?.message}`, err?.stack);
+      if (err instanceof HttpException) throw err;
+      throw new InternalServerErrorException(`Failed to retrieve unlocked contacts: ${err?.message || err}`);
+    }
   }
 }
 

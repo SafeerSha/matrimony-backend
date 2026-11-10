@@ -47,6 +47,9 @@ export class SubscriptionController {
     @Param('targetId') targetId: string,
   ) {
     const userId = user?.sub || user?.id;
+    if (!userId) {
+      throw new BadRequestException('Authenticated user identification missing');
+    }
     return this.subscriptionService.getContactStatus(userId, targetId);
   }
 
@@ -59,6 +62,9 @@ export class SubscriptionController {
     @Param('targetId') targetId: string,
   ) {
     const userId = user?.sub || user?.id;
+    if (!userId) {
+      throw new BadRequestException('Authenticated user identification missing');
+    }
     return this.subscriptionService.unlockContact(userId, targetId);
   }
 
@@ -67,6 +73,9 @@ export class SubscriptionController {
   @Get('contacts/my-unlocked')
   async getMyUnlockedContacts(@CurrentUser() user: any) {
     const userId = user?.sub || user?.id;
+    if (!userId) {
+      throw new BadRequestException('Authenticated user identification missing');
+    }
     return this.subscriptionService.getUnlockedContacts(userId);
   }
 

@@ -10,6 +10,10 @@ if [ -n "$DATABASE_URL" ]; then
     echo "WARNING: Prisma migration deploy failed or database is not reachable yet."
     echo "Continuing container startup..."
   }
+  echo "Ensuring Prisma Client is generated to match current schema..."
+  npx prisma generate || {
+    echo "WARNING: Prisma generate failed. Falling back to precompiled client."
+  }
 else
   echo "DATABASE_URL is not set. Skipping Prisma database migrations."
 fi

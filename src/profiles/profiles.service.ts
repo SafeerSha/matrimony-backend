@@ -403,9 +403,29 @@ export class ProfilesService {
             if (unlock) {
               isContactUnlocked = true;
             }
+          } else {
+            const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
+              SELECT id FROM "ContactUnlock"
+              WHERE "userId" = ${viewerId} AND "targetUserId" = ${profile.userId}
+              LIMIT 1;
+            `;
+            if (rows && rows.length > 0) {
+              isContactUnlocked = true;
+            }
           }
         } catch (e: any) {
-          this.logger.warn(`Failed to query contact unlock record: ${e?.message}`);
+          try {
+            const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
+              SELECT id FROM "ContactUnlock"
+              WHERE "userId" = ${viewerId} AND "targetUserId" = ${profile.userId}
+              LIMIT 1;
+            `;
+            if (rows && rows.length > 0) {
+              isContactUnlocked = true;
+            }
+          } catch (sqlErr: any) {
+            this.logger.warn(`Failed to query contact unlock record: ${sqlErr?.message || e?.message}`);
+          }
         }
       }
 
