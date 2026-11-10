@@ -92,26 +92,109 @@ export class AuthService {
     await this.usersService.updateRefreshToken(userId, hashedRefreshToken);
 
     if (sessionId) {
-      await this.prisma.userDevice.upsert({
+      // Auto-purge sessions older than 30 days for this user
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      try {
+        await this.prisma.userDevice.deleteMany({
+          where: {
+            userId,
+            lastActiveAt: { lt: thirtyDaysAgo },
+          },
+        });
+      } catch {
+        // Non-blocking cleanup
+      }
+
+      // 1. Check if the exact sessionId already exists (e.g. during token refresh)
+      const existingBySession = await this.prisma.userDevice.findUnique({
         where: { sessionId },
-        create: {
-          userId,
-          sessionId,
-          hashedRefreshToken,
-          deviceName: deviceInfo?.deviceName || 'Chrome on Windows 11',
-          deviceType: deviceInfo?.deviceType || 'DESKTOP',
-          browser: deviceInfo?.browser || 'Chrome',
-          os: deviceInfo?.os || 'Windows 11',
-          ipAddress: deviceInfo?.ipAddress || '127.0.0.1',
-          location: deviceInfo?.location || 'Kochi, Kerala',
-          userAgent: deviceInfo?.deviceName,
-          lastActiveAt: new Date(),
-        },
-        update: {
-          hashedRefreshToken,
-          lastActiveAt: new Date(),
-        },
       });
+
+      if (existingBySession) {
+        await this.prisma.userDevice.update({
+          where: { sessionId },
+          data: {
+            hashedRefreshToken,
+            lastActiveAt: new Date(),
+            ...(deviceInfo?.location ? { location: deviceInfo.location } : {}),
+            ...(deviceInfo?.ipAddress ? { ipAddress: deviceInfo.ipAddress } : {}),
+          },
+        });
+      } else if (deviceInfo?.deviceName) {
+        // 2. Session Deduplication: if the user logs in from the same device again,
+        // update the existing device record with the new sessionId and refreshToken
+        const existingDevice = await this.prisma.userDevice.findFirst({
+          where: {
+            userId,
+            deviceName: deviceInfo.deviceName,
+          },
+          orderBy: { lastActiveAt: 'desc' },
+        });
+
+        if (existingDevice) {
+          await this.prisma.userDevice.update({
+            where: { id: existingDevice.id },
+            data: {
+              sessionId,
+              hashedRefreshToken,
+              deviceType: deviceInfo.deviceType || existingDevice.deviceType,
+              browser: deviceInfo.browser || existingDevice.browser,
+              os: deviceInfo.os || existingDevice.os,
+              ipAddress: deviceInfo.ipAddress || existingDevice.ipAddress,
+              location: deviceInfo.location || existingDevice.location,
+              userAgent: deviceInfo.deviceName,
+              lastActiveAt: new Date(),
+            },
+          });
+
+          // Clean up any other duplicates for this device name
+          await this.prisma.userDevice.deleteMany({
+            where: {
+              userId,
+              deviceName: deviceInfo.deviceName,
+              id: { not: existingDevice.id },
+            },
+          });
+        } else {
+          // 3. Brand new device
+          await this.prisma.userDevice.create({
+            data: {
+              userId,
+              sessionId,
+              hashedRefreshToken,
+              deviceName: deviceInfo.deviceName,
+              deviceType: deviceInfo.deviceType || 'DESKTOP',
+              browser: deviceInfo.browser || 'Chrome',
+              os: deviceInfo.os || 'Windows 11',
+              ipAddress: deviceInfo.ipAddress || '127.0.0.1',
+              location: deviceInfo.location || 'Kochi, Kerala',
+              userAgent: deviceInfo.deviceName,
+              lastActiveAt: new Date(),
+            },
+          });
+        }
+      } else {
+        // Fallback upsert
+        await this.prisma.userDevice.upsert({
+          where: { sessionId },
+          create: {
+            userId,
+            sessionId,
+            hashedRefreshToken,
+            deviceName: 'Chrome on Windows 11',
+            deviceType: 'DESKTOP',
+            browser: 'Chrome',
+            os: 'Windows 11',
+            ipAddress: '127.0.0.1',
+            location: 'Kochi, Kerala',
+            lastActiveAt: new Date(),
+          },
+          update: {
+            hashedRefreshToken,
+            lastActiveAt: new Date(),
+          },
+        });
+      }
     }
   }
 
@@ -363,6 +446,15 @@ export class AuthService {
       });
       if (existingUser) {
         throw new ConflictException('This email address is already associated with another account.');
+      }
+    }
+
+    if (dto.purpose === 'change_phone' && normalizedPhone) {
+      const existingUser = await this.prisma.user.findFirst({
+        where: { phone: normalizedPhone },
+      });
+      if (existingUser) {
+        throw new ConflictException('This mobile number is already associated with another account.');
       }
     }
 
@@ -1087,10 +1179,60 @@ export class AuthService {
   }
 
   async getDevices(userId: string, currentSessionId?: string, fallbackDeviceInfo?: ParsedDeviceInfo) {
+    // 1. Auto-purge sessions older than 30 days
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    try {
+      await this.prisma.userDevice.deleteMany({
+        where: {
+          userId,
+          lastActiveAt: { lt: thirtyDaysAgo },
+          ...(currentSessionId ? { sessionId: { not: currentSessionId } } : {}),
+        },
+      });
+    } catch {
+      // Non-blocking cleanup
+    }
+
     let devices = await this.prisma.userDevice.findMany({
       where: { userId },
       orderBy: { lastActiveAt: 'desc' },
     });
+
+    // 2. Legacy deduplication: if multiple records exist for the same deviceName,
+    // preserve the currentSessionId one or the latest active one, and prune older duplicates
+    if (devices.length > 0) {
+      const seenDeviceNames = new Set<string>();
+      const devicesToKeep: typeof devices = [];
+      const duplicateIdsToDelete: string[] = [];
+
+      // Prioritize active/current device session
+      const currentDevice = currentSessionId ? devices.find((d) => d.sessionId === currentSessionId) : null;
+      if (currentDevice) {
+        seenDeviceNames.add(currentDevice.deviceName);
+        devicesToKeep.push(currentDevice);
+      }
+
+      for (const d of devices) {
+        if (currentDevice && d.id === currentDevice.id) continue;
+        if (!seenDeviceNames.has(d.deviceName)) {
+          seenDeviceNames.add(d.deviceName);
+          devicesToKeep.push(d);
+        } else {
+          duplicateIdsToDelete.push(d.id);
+        }
+      }
+
+      if (duplicateIdsToDelete.length > 0) {
+        try {
+          await this.prisma.userDevice.deleteMany({
+            where: { id: { in: duplicateIdsToDelete } },
+          });
+        } catch {
+          // Non-blocking
+        }
+        devices = devicesToKeep;
+      }
+    }
 
     if (devices.length === 0 && currentSessionId) {
       const created = await this.prisma.userDevice.create({
@@ -1110,7 +1252,11 @@ export class AuthService {
     } else if (currentSessionId) {
       await this.prisma.userDevice.updateMany({
         where: { sessionId: currentSessionId },
-        data: { lastActiveAt: new Date() },
+        data: {
+          lastActiveAt: new Date(),
+          ...(fallbackDeviceInfo?.location ? { location: fallbackDeviceInfo.location } : {}),
+          ...(fallbackDeviceInfo?.ipAddress ? { ipAddress: fallbackDeviceInfo.ipAddress } : {}),
+        },
       });
     }
 

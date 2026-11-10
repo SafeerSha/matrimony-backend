@@ -195,7 +195,7 @@ describe('ProfilesService', () => {
       } as any;
 
       mockPrisma.profile.upsert.mockResolvedValue({ id: 'p1', userId });
-      mockPrisma.user.findUnique.mockResolvedValue({ id: userId, profile: {}, photos: [] });
+      mockPrisma.user.findUnique.mockResolvedValue({ id: userId, phone: '+919999999999', profile: {}, photos: [] });
 
       await service.updateProfile(userId, dto);
 

@@ -5,6 +5,7 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpdatePreferencesDto, transformToStringOrCsv } from './dto/update-preferences.dto';
 import { sanitizeStringArray, sanitizeText } from '../common/utils/sanitize.util';
 import { calculateCompatibility, calculateCompatibilityWithHighlights } from '../common/utils/compatibility.util';
+import { normalizePhoneNumber } from '../common/utils/phone.util';
 
 export function calculateAge(dob: Date | string | null | undefined): number | null {
   if (!dob) return null;
@@ -425,6 +426,8 @@ export class ProfilesService {
       lastName,
       email,
       emailOtp,
+      phone,
+      phoneOtp,
       education,
       occupation,
       profession,
@@ -499,6 +502,39 @@ export class ProfilesService {
       }
     }
 
+    if (phone !== undefined) {
+      const normalizedPhone = phone ? normalizePhoneNumber(phone) : null;
+      if (phone && !normalizedPhone) {
+        throw new BadRequestException('Please enter a valid 10-digit mobile number.');
+      }
+      if (normalizedPhone) {
+        const currentUser = await this.prisma.user.findUnique({
+          where: { id: userId },
+          select: { phone: true },
+        });
+
+        if (currentUser && currentUser.phone !== normalizedPhone) {
+          const existing = await this.prisma.user.findFirst({
+            where: {
+              phone: normalizedPhone,
+              id: { not: userId },
+            },
+          });
+          if (existing) {
+            throw new ConflictException('This mobile number is already associated with another account.');
+          }
+
+          if (!phoneOtp) {
+            throw new BadRequestException('A 6-digit verification code is required to change your mobile number.');
+          }
+
+          await this.verifyPhoneOtp(normalizedPhone, phoneOtp);
+          userUpdateData.phone = normalizedPhone;
+          userUpdateData.isPhoneVerified = true;
+        }
+      }
+    }
+
     if (Object.keys(userUpdateData).length > 0) {
       await this.prisma.user.update({
         where: { id: userId },
@@ -518,6 +554,7 @@ export class ProfilesService {
       'isEmailVerified',
       'isBanned',
       'emailOtp',
+      'phoneOtp',
       'createdAt',
       'updatedAt',
     ];
@@ -650,6 +687,73 @@ export class ProfilesService {
     const otpRecord = await this.prisma.otpVerification.findFirst({
       where: {
         email,
+        consumed: false,
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!otpRecord) {
+      throw new BadRequestException('Invalid or expired verification code. Please request a new code.');
+    }
+
+    if (otpRecord.attempts >= 3) {
+      await this.prisma.otpVerification.update({
+        where: { id: otpRecord.id },
+        data: { consumed: true },
+      });
+      throw new BadRequestException(
+        'Too many invalid attempts. This verification code has been invalidated. Please request a new code.',
+      );
+    }
+
+    const calculatedHash = crypto
+      .createHmac('sha256', otpSecret)
+      .update(trimmedCode)
+      .digest('hex');
+
+    const hashesMatch =
+      Boolean(otpRecord.codeHash) &&
+      otpRecord.codeHash.length === calculatedHash.length &&
+      crypto.timingSafeEqual(
+        Buffer.from(otpRecord.codeHash, 'hex'),
+        Buffer.from(calculatedHash, 'hex'),
+      );
+
+    if (!hashesMatch) {
+      const newAttempts = otpRecord.attempts + 1;
+      await this.prisma.otpVerification.update({
+        where: { id: otpRecord.id },
+        data: {
+          attempts: newAttempts,
+          consumed: newAttempts >= 3,
+        },
+      });
+
+      throw new BadRequestException(
+        newAttempts >= 3
+          ? 'Too many invalid attempts. This verification code has been invalidated.'
+          : `Invalid verification code. ${3 - newAttempts} attempt(s) remaining.`,
+      );
+    }
+
+    await this.prisma.otpVerification.update({
+      where: { id: otpRecord.id },
+      data: { consumed: true },
+    });
+  }
+
+  private async verifyPhoneOtp(phone: string, code: string): Promise<void> {
+    const trimmedCode = (code || '').trim();
+    if (!trimmedCode || trimmedCode.length !== 6) {
+      throw new BadRequestException('A valid 6-digit verification code is required.');
+    }
+
+    const otpSecret = process.env.JWT_ACCESS_SECRET || 'shaadichat-otp-secret-salt';
+
+    const otpRecord = await this.prisma.otpVerification.findFirst({
+      where: {
+        phone,
         consumed: false,
         expiresAt: { gt: new Date() },
       },

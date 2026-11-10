@@ -263,4 +263,55 @@ export class MailService {
     );
     return true;
   }
+
+  /**
+   * Dispatches support inquiry notification to admin / customer care inbox
+   */
+  async sendSupportNotification(data: {
+    name: string;
+    email: string;
+    topic: string;
+    message: string;
+    userId?: string;
+  }): Promise<boolean> {
+    if (!this.transporter) {
+      this.logger.log(
+        `[SIMULATED-SUPPORT-MAIL] Inquiry from ${data.name} (${data.email}): [${data.topic}] ${data.message}`,
+      );
+      return true;
+    }
+
+    const to = 'ishtamchat@gmail.com';
+    const fromAddress = this.configService.get<string>('EMAIL_FROM') || '"Ishtam Chat Support" <pksafeer8@gmail.com>';
+
+    try {
+      await this.transporter.sendMail({
+        from: fromAddress,
+        to,
+        replyTo: data.email,
+        subject: `[IshtamChat Support] ${data.topic} - ${data.name}`,
+        html: `
+          <div style="font-family: sans-serif; padding: 20px; color: #333; max-width: 600px;">
+            <h2 style="color: #7A1835; margin-top: 0;">New Support Inquiry Received</h2>
+            <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 20px;">
+              <tr><td style="padding: 6px 0; font-weight: bold; width: 100px;">Name:</td><td>${data.name}</td></tr>
+              <tr><td style="padding: 6px 0; font-weight: bold;">Email:</td><td><a href="mailto:${data.email}">${data.email}</a></td></tr>
+              <tr><td style="padding: 6px 0; font-weight: bold;">Topic:</td><td>${data.topic}</td></tr>
+              ${data.userId ? `<tr><td style="padding: 6px 0; font-weight: bold;">User ID:</td><td><code>${data.userId}</code></td></tr>` : ''}
+            </table>
+            <div style="background-color: #FAF3EC; padding: 15px; border-radius: 8px; border: 1px solid #EAD8C7;">
+              <p style="margin: 0; font-size: 14px; line-height: 1.6; white-space: pre-wrap;">${data.message}</p>
+            </div>
+            <p style="font-size: 11px; color: #888; margin-top: 24px;">Sent from IshtamChat Web Portal</p>
+          </div>
+        `,
+        text: `New Support Inquiry\nName: ${data.name}\nEmail: ${data.email}\nTopic: ${data.topic}\n\nMessage:\n${data.message}`,
+      });
+      this.logger.log(`[MAIL-SERVICE] Support inquiry notification delivered to ${to} for ${data.name}`);
+      return true;
+    } catch (err: any) {
+      this.logger.error(`[MAIL-SERVICE] Failed to send support notification: ${err.message}`);
+      return false;
+    }
+  }
 }
