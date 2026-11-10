@@ -924,26 +924,11 @@ export class SubscriptionService {
   }
 
   /**
-   * Resilient helper to record an unlock record using either Prisma delegate or Raw SQL
+   * Resilient helper to record an unlock record directly and safely using raw SQL
+   * with ON CONFLICT DO NOTHING to guarantee transaction safety in PostgreSQL.
    */
   private async recordContactUnlock(userId: string, targetUserId: string, tx?: any): Promise<void> {
     const client = tx || this.prisma;
-    if ((client as any).contactUnlock?.create) {
-      try {
-        await client.contactUnlock.create({
-          data: {
-            userId,
-            targetUserId,
-          },
-        });
-        return;
-      } catch (err: any) {
-        // Unique constraint violation (P2002) means it was already created, safe to proceed
-        if (err?.code === 'P2002') return;
-        this.logger.warn(`[recordContactUnlock] Delegate insert failed, falling back to raw SQL: ${err?.message}`);
-      }
-    }
-
     try {
       const id = randomUUID();
       await client.$executeRaw`
@@ -952,7 +937,7 @@ export class SubscriptionService {
         ON CONFLICT ("userId", "targetUserId") DO NOTHING;
       `;
     } catch (err: any) {
-      this.logger.error(`[recordContactUnlock] Fallback raw SQL insert failed: ${err?.message}`);
+      this.logger.error(`[recordContactUnlock] Raw SQL insert failed: ${err?.message}`, err?.stack);
       throw err;
     }
   }
