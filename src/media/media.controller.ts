@@ -18,6 +18,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { memoryStorage } from 'multer';
 import * as fileType from 'file-type';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { Throttle } from '../common/decorators/throttle.decorator';
 
 const multerStorage = memoryStorage();
 
@@ -55,6 +56,7 @@ async function validateMagicBytes(buffer: Buffer): Promise<boolean> {
 export class MediaController {
   constructor(private readonly mediaService: MediaService) {}
 
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post('upload')
   @UseInterceptors(
     FileInterceptor('photo', {
@@ -81,6 +83,7 @@ export class MediaController {
     return this.mediaService.uploadPhoto(user.sub, file);
   }
 
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post('upload-multiple')
   @UseInterceptors(
     FilesInterceptor('photos', 3, {

@@ -11,6 +11,7 @@ import { SubscriptionService } from './subscription.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { Throttle } from '../common/decorators/throttle.decorator';
 
 @ApiTags('Subscription')
 @Controller('subscription')
@@ -51,6 +52,7 @@ export class SubscriptionController {
 
   @ApiBearerAuth('JWT-auth')
   @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post('contacts/unlock/:targetId')
   async unlockContact(
     @CurrentUser() user: any,

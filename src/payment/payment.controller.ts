@@ -18,9 +18,8 @@ import { PaymentService } from './payment.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Throttle, SkipThrottle } from '../common/decorators/throttle.decorator';
 import { Request } from 'express';
-
-export const SkipThrottle = (skip = true) => SetMetadata('throttler:skip', skip);
 
 @ApiTags('Payments')
 @Controller('payments')
@@ -31,10 +30,12 @@ export class PaymentController {
 
   /**
    * Initializes a Cashfree payment order for subscription upgrade.
+   * Throttled to 10 orders per minute to prevent gateway abuse and orphaned orders.
    */
   @ApiOperation({ summary: 'Create a Cashfree payment order' })
   @ApiBearerAuth('JWT-auth')
   @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post('create-order')
   async createOrder(@CurrentUser() user: any, @Body() body: CreateOrderDto) {
     const userId = user?.sub || user?.id;
@@ -101,10 +102,12 @@ export class PaymentController {
 
   /**
    * Fallback verification endpoint: Frontend calls this after gateway redirection.
+   * Throttled to 20 checks per minute to protect gateway verification API.
    */
   @ApiOperation({ summary: 'Verify Cashfree order payment status directly' })
   @ApiBearerAuth('JWT-auth')
   @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   @Get('verify/:orderId')
   async verifyOrder(@CurrentUser() user: any, @Param('orderId') orderId: string) {
     const userId = user?.sub || user?.id;
