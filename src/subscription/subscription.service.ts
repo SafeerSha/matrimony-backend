@@ -1057,6 +1057,14 @@ export class SubscriptionService {
         };
       }
 
+      // Reject if target user has no registered phone number
+      if (!targetUser.phone) {
+        throw new BadRequestException({
+          code: 'NO_PHONE_REGISTERED',
+          message: 'This member has not registered a verified contact number yet.',
+        });
+      }
+
       // Verify permit & credits
       const sub = await this.prisma.subscription.findUnique({ where: { userId: viewerId } });
       const isSubscribed = Boolean(
