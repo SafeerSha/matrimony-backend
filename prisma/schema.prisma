@@ -47,6 +47,7 @@ model User {
   dailyQuotas         UserDailyQuota[]
   unlockedContacts    ContactUnlock[]   @relation("UnlockedByUser")
   contactUnlockedBy   ContactUnlock[]   @relation("UnlockedTargetUser")
+  paymentTransactions PaymentTransaction[]
 
   @@index([createdAt])
   @@index([lastActiveAt])
@@ -294,4 +295,27 @@ model ContactUnlock {
   @@unique([userId, targetUserId])
   @@index([userId])
   @@index([targetUserId])
+}
+
+model PaymentTransaction {
+  id             String    @id @default(uuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orderId        String    @unique
+  cfOrderId      String?
+  cfPaymentId    String?
+  planCode       String
+  planName       String
+  amount         Float
+  currency       String    @default("INR")
+  status         String    @default("PENDING") // 'SUCCESS', 'FAILED', 'PENDING', 'USER_DROPPED'
+  paymentMethod  String?   // 'UPI', 'CARD', 'NETBANKING', 'APP', etc.
+  paymentMessage String?
+  metadata       Json?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([orderId])
+  @@index([status])
 }

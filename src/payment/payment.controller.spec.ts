@@ -12,6 +12,7 @@ describe('PaymentController', () => {
       verifyWebhookSignature: jest.fn(),
       processWebhookEvent: jest.fn(),
       verifyOrderPayment: jest.fn(),
+      getUserTransactions: jest.fn(),
     };
 
     controller = new PaymentController(mockPaymentService as any);
@@ -89,6 +90,21 @@ describe('PaymentController', () => {
 
       expect(result).toEqual({ orderId: 'ord_123', paymentStatus: 'SUCCESS' });
       expect(mockPaymentService.verifyOrderPayment).toHaveBeenCalledWith('user-uuid-1', 'ord_123');
+    });
+  });
+
+  describe('getUserTransactions', () => {
+    it('should invoke getUserTransactions on PaymentService with user id', async () => {
+      const mockTx = [
+        { id: 'tx-1', orderId: 'ord_1', status: 'SUCCESS', amount: 2500 },
+      ];
+      mockPaymentService.getUserTransactions.mockResolvedValue(mockTx);
+
+      const user = { sub: 'user-uuid-1' };
+      const result = await controller.getUserTransactions(user);
+
+      expect(result).toEqual(mockTx);
+      expect(mockPaymentService.getUserTransactions).toHaveBeenCalledWith('user-uuid-1');
     });
   });
 });
