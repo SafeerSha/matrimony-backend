@@ -1,3 +1,5 @@
+import * as geoip from 'geoip-lite';
+
 export interface ParsedDeviceInfo {
   deviceType: 'DESKTOP' | 'MOBILE';
   browser: string;
@@ -5,6 +7,116 @@ export interface ParsedDeviceInfo {
   deviceName: string;
   location: string;
   ipAddress?: string;
+}
+
+const INDIAN_STATES: Record<string, string> = {
+  AN: 'Andaman and Nicobar',
+  AP: 'Andhra Pradesh',
+  AR: 'Arunachal Pradesh',
+  AS: 'Assam',
+  BR: 'Bihar',
+  CH: 'Chandigarh',
+  CT: 'Chhattisgarh',
+  DN: 'Dadra and Nagar Haveli',
+  DD: 'Daman and Diu',
+  DL: 'Delhi',
+  GA: 'Goa',
+  GJ: 'Gujarat',
+  HR: 'Haryana',
+  HP: 'Himachal Pradesh',
+  JK: 'Jammu and Kashmir',
+  JH: 'Jharkhand',
+  KA: 'Karnataka',
+  KL: 'Kerala',
+  LA: 'Ladakh',
+  LD: 'Lakshadweep',
+  MP: 'Madhya Pradesh',
+  MH: 'Maharashtra',
+  MN: 'Manipur',
+  ML: 'Meghalaya',
+  MZ: 'Mizoram',
+  NL: 'Nagaland',
+  OR: 'Odisha',
+  PB: 'Punjab',
+  RJ: 'Rajasthan',
+  SK: 'Sikkim',
+  TN: 'Tamil Nadu',
+  TG: 'Telangana',
+  TR: 'Tripura',
+  UP: 'Uttar Pradesh',
+  UT: 'Uttarakhand',
+  WB: 'West Bengal',
+};
+
+const COUNTRY_NAMES: Record<string, string> = {
+  IN: 'India',
+  AE: 'UAE',
+  US: 'United States',
+  GB: 'United Kingdom',
+  CA: 'Canada',
+  AU: 'Australia',
+  SG: 'Singapore',
+  SA: 'Saudi Arabia',
+  QA: 'Qatar',
+  KW: 'Kuwait',
+  OM: 'Oman',
+  BH: 'Bahrain',
+  MY: 'Malaysia',
+  DE: 'Germany',
+  FR: 'France',
+};
+
+export function resolveGeoLocation(clientIp?: string, geoHeader?: string): string {
+  // 1. If upstream reverse proxy (Cloudflare, Vercel, Nginx) already identified the city
+  if (geoHeader && geoHeader.trim() && geoHeader.trim().toLowerCase() !== 'unknown') {
+    return geoHeader.trim();
+  }
+
+  // 2. Perform offline GeoIP lookup on clientIp
+  if (clientIp) {
+    const cleanIp = clientIp.split(',')[0].trim();
+    const isPrivate =
+      cleanIp === '127.0.0.1' ||
+      cleanIp === '::1' ||
+      cleanIp === 'localhost' ||
+      cleanIp.startsWith('192.168.') ||
+      cleanIp.startsWith('10.') ||
+      cleanIp.startsWith('172.16.') ||
+      cleanIp.startsWith('172.17.') ||
+      cleanIp.startsWith('172.18.') ||
+      cleanIp.startsWith('172.19.') ||
+      cleanIp.startsWith('172.2') ||
+      cleanIp.startsWith('172.3');
+
+    if (!isPrivate) {
+      try {
+        const geo = geoip.lookup(cleanIp);
+        if (geo) {
+          const city = geo.city?.trim();
+          const countryName = COUNTRY_NAMES[geo.country] || geo.country;
+          const stateName = geo.country === 'IN' ? (INDIAN_STATES[geo.region] || geo.region) : geo.region;
+
+          if (city && stateName) {
+            return `${city}, ${stateName}`;
+          }
+          if (city && countryName) {
+            return `${city}, ${countryName}`;
+          }
+          if (stateName && countryName) {
+            return `${stateName}, ${countryName}`;
+          }
+          if (countryName) {
+            return countryName;
+          }
+        }
+      } catch {
+        // Fall through to fallback
+      }
+    }
+  }
+
+  // 3. Sensible default for development / local network
+  return 'Kochi, Kerala';
 }
 
 export function parseUserAgentAndHeaders(
@@ -70,7 +182,7 @@ export function parseUserAgentAndHeaders(
   }
 
   // 6. Location inference
-  const location = geoHeader || 'Kochi, Kerala';
+  const location = resolveGeoLocation(clientIp, geoHeader);
 
   return {
     deviceType,

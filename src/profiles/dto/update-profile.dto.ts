@@ -30,6 +30,15 @@ export class UpdateProfileDto {
 
   @IsOptional()
   @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(6)
+  phoneOtp?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(50)
   firstName?: string;
 

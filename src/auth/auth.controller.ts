@@ -31,8 +31,14 @@ export class AuthController {
 
   private extractDeviceInfo(req: any): ParsedDeviceInfo {
     const userAgent = (req.headers && req.headers['user-agent']) as string | undefined;
-    const clientIp = ((req.headers && req.headers['x-forwarded-for']) as string)?.split(',')[0]?.trim() || req.ip;
-    const geoHeader = (req.headers && (req.headers['x-client-location'] || req.headers['cf-ipcity'] || req.headers['x-client-city'])) as string | undefined;
+    const clientIp =
+      ((req.headers && (req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for'] || req.headers['x-real-ip'])) as string)
+        ?.split(',')[0]
+        ?.trim() || req.ip;
+    const city = (req.headers && (req.headers['cf-ipcity'] || req.headers['x-client-city'] || req.headers['x-vercel-ip-city'])) as string | undefined;
+    const region = (req.headers && (req.headers['cf-region'] || req.headers['x-client-region'] || req.headers['x-vercel-ip-country-region'])) as string | undefined;
+    const geoHeader = (req.headers && req.headers['x-client-location']) as string | undefined
+      || (city && region ? `${city}, ${region}` : city);
     return parseUserAgentAndHeaders(userAgent, clientIp, geoHeader);
   }
 

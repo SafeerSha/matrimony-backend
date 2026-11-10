@@ -48,6 +48,8 @@ model User {
   unlockedContacts    ContactUnlock[]   @relation("UnlockedByUser")
   contactUnlockedBy   ContactUnlock[]   @relation("UnlockedTargetUser")
   paymentTransactions PaymentTransaction[]
+  supportInquiries    SupportInquiry[]
+  feedbacks           Feedback[]
 
   @@index([createdAt])
   @@index([lastActiveAt])
@@ -318,4 +320,37 @@ model PaymentTransaction {
   @@index([userId, createdAt])
   @@index([orderId])
   @@index([status])
+}
+
+model SupportInquiry {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  name      String
+  email     String
+  topic     String
+  message   String
+  status    String   @default("OPEN") // 'OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED'
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Feedback {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  rating    Int      // 1 to 5
+  type      String   // 'general', 'feature', 'bug'
+  message   String
+  status    String   @default("SUBMITTED") // 'SUBMITTED', 'REVIEWED', 'ACTIONED'
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt])
 }
