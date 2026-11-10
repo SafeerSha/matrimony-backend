@@ -9,7 +9,7 @@ describe('ProfilesService', () => {
   let service: ProfilesService;
   let prisma: PrismaService;
 
-  const mockPrisma = {
+  const mockPrisma: any = {
     profile: {
       upsert: jest.fn(),
       findFirst: jest.fn(),
@@ -199,7 +199,7 @@ describe('ProfilesService', () => {
 
       await service.updateProfile(userId, dto);
 
-      const updatePayload = (prisma.profile.upsert as jest.Mock).mock.calls[0][0].update;
+      const updatePayload = (prisma.profile.upsert as any).mock.calls[0][0].update;
       expect(updatePayload.role).toBeUndefined();
       expect(updatePayload.status).toBeUndefined();
       expect(updatePayload.isBanned).toBeUndefined();

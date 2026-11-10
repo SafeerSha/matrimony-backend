@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, HttpException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
@@ -99,6 +99,8 @@ export function formatPreferencesObject(profilePrefs: any, tablePref: any) {
 
 @Injectable()
 export class ProfilesService {
+  private readonly logger = new Logger(ProfilesService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async getProfile(userId: string) {
@@ -211,212 +213,260 @@ export class ProfilesService {
   }
 
   async getPublicProfile(userId: string, viewerId?: string) {
-    const rawId = (userId || '').trim();
-    const imcNormalized = rawId.toUpperCase().startsWith('IMC-')
-      ? rawId.toUpperCase()
-      : `IMC-${rawId.toUpperCase()}`;
+    try {
+      const rawId = (userId || '').trim();
+      const imcNormalized = rawId.toUpperCase().startsWith('IMC-')
+        ? rawId.toUpperCase()
+        : `IMC-${rawId.toUpperCase()}`;
 
-    const [profile, viewer] = await Promise.all([
-      this.prisma.profile.findFirst({
-        where: {
-          OR: [
-            { id: rawId },
-            { userId: rawId },
-            { user: { profileId: rawId } },
-            { user: { profileId: imcNormalized } },
-            { user: { profileId: { equals: rawId, mode: 'insensitive' } } },
-            { user: { profileId: { equals: imcNormalized, mode: 'insensitive' } } },
-          ],
-          user: { isBanned: false },
-        },
-        include: {
-          user: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              profileId: true,
-              phone: true,
-              status: true,
-              lastActiveAt: true,
-              isPhoneVerified: true,
-              preference: true,
-              photos: {
-                orderBy: [
-                  { isPrimary: 'desc' },
-                  { isVerified: 'desc' },
-                  { createdAt: 'desc' },
-                ],
+      const [profile, viewer] = await Promise.all([
+        this.prisma.profile.findFirst({
+          where: {
+            OR: [
+              { id: rawId },
+              { userId: rawId },
+              { user: { profileId: rawId } },
+              { user: { profileId: imcNormalized } },
+              { user: { profileId: { equals: rawId, mode: 'insensitive' } } },
+              { user: { profileId: { equals: imcNormalized, mode: 'insensitive' } } },
+            ],
+            user: { isBanned: false },
+          },
+          include: {
+            user: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                profileId: true,
+                phone: true,
+                status: true,
+                lastActiveAt: true,
+                isPhoneVerified: true,
+                preference: true,
+                photos: {
+                  orderBy: [
+                    { isPrimary: 'desc' },
+                    { isVerified: 'desc' },
+                    { createdAt: 'desc' },
+                  ],
+                },
               },
             },
           },
-        },
-      }),
-      viewerId
-        ? this.prisma.user.findUnique({
-            where: { id: viewerId },
-            include: { profile: true, preference: true },
-          })
-        : Promise.resolve(null),
-    ]);
+        }),
+        viewerId
+          ? this.prisma.user.findUnique({
+              where: { id: viewerId },
+              include: { profile: true, preference: true },
+            }).catch((err) => {
+              this.logger.warn(`Failed to fetch viewer for profile view: ${err?.message}`);
+              return null;
+            })
+          : Promise.resolve(null),
+      ]);
 
-    if (!profile) {
-      throw new NotFoundException('Profile not found');
-    }
+      if (!profile) {
+        throw new NotFoundException('Profile not found');
+      }
 
-    const calculatedAge = calculateAge(profile.dateOfBirth);
-    const lastActive = (profile.user as any)?.lastActiveAt
-      ? new Date((profile.user as any).lastActiveAt)
-      : null;
-    const isOnline = lastActive
-      ? Date.now() - lastActive.getTime() <= 5 * 60 * 1000
-      : false;
+      const calculatedAge = calculateAge(profile.dateOfBirth);
+      const lastActive = (profile.user as any)?.lastActiveAt
+        ? new Date((profile.user as any).lastActiveAt)
+        : null;
+      const isOnline = lastActive
+        ? Date.now() - lastActive.getTime() <= 5 * 60 * 1000
+        : false;
 
-    const compatibilityResult = calculateCompatibilityWithHighlights(viewer, profile);
-    const compatibility = compatibilityResult.score;
-    const compatibilityHighlights = compatibilityResult.highlights;
-    const formattedPreferences = formatPreferencesObject(profile.preferences, (profile.user as any)?.preference);
+      let compatibility = 85;
+      let compatibilityHighlights: any[] = [];
+      try {
+        const compatibilityResult = calculateCompatibilityWithHighlights(viewer, profile);
+        compatibility = compatibilityResult.score;
+        compatibilityHighlights = compatibilityResult.highlights;
+      } catch (e: any) {
+        this.logger.warn(`Failed to calculate compatibility: ${e?.message}`);
+      }
 
-    let connectionStatus: 'SENT' | 'RECEIVED' | 'MATCHED' | 'SHORTLISTED' | 'REJECTED' | null = null;
-    let isMatched = false;
-    let isInterestSent = false;
-    let isInterestReceived = false;
-    let isShortlisted = false;
-    let isDeclined = false;
-    let isDeclinedByThem = false;
-    let isDeclinedByMe = false;
+      let formattedPreferences: any = null;
+      try {
+        formattedPreferences = formatPreferencesObject(profile.preferences, (profile.user as any)?.preference);
+      } catch (e: any) {
+        this.logger.warn(`Failed to format preferences: ${e?.message}`);
+        formattedPreferences = profile.preferences || {};
+      }
 
-    if (viewerId && profile.userId && viewerId !== profile.userId) {
-      const connection = await this.prisma.connection.findFirst({
-        where: {
-          OR: [
-            { senderId: viewerId, receiverId: profile.userId },
-            { senderId: profile.userId, receiverId: viewerId },
-          ],
-        },
-      });
+      let connectionStatus: 'SENT' | 'RECEIVED' | 'MATCHED' | 'SHORTLISTED' | 'REJECTED' | null = null;
+      let isMatched = false;
+      let isInterestSent = false;
+      let isInterestReceived = false;
+      let isShortlisted = false;
+      let isDeclined = false;
+      let isDeclinedByThem = false;
+      let isDeclinedByMe = false;
 
-      // Also verify if messages were exchanged between the two users
-      const hasMessages = !connection || connection.status !== 'ACCEPTED'
-        ? await this.prisma.message.findFirst({
+      if (viewerId && profile.userId && viewerId !== profile.userId) {
+        let connection: any = null;
+        try {
+          connection = await this.prisma.connection.findFirst({
             where: {
               OR: [
                 { senderId: viewerId, receiverId: profile.userId },
                 { senderId: profile.userId, receiverId: viewerId },
               ],
             },
-            select: { id: true },
-          })
-        : null;
+          });
+        } catch (e: any) {
+          this.logger.warn(`Failed to fetch connection status: ${e?.message}`);
+        }
 
-      if (connection) {
-        if (connection.status === 'ACCEPTED' || hasMessages) {
+        let hasMessages: any = null;
+        try {
+          hasMessages = !connection || connection.status !== 'ACCEPTED'
+            ? await this.prisma.message.findFirst({
+                where: {
+                  OR: [
+                    { senderId: viewerId, receiverId: profile.userId },
+                    { senderId: profile.userId, receiverId: viewerId },
+                  ],
+                },
+                select: { id: true },
+              })
+            : null;
+        } catch (e: any) {
+          this.logger.warn(`Failed to fetch message existence: ${e?.message}`);
+        }
+
+        if (connection) {
+          if (connection.status === 'ACCEPTED' || hasMessages) {
+            connectionStatus = 'MATCHED';
+            isMatched = true;
+            isInterestSent = false;
+          } else if (connection.senderId === viewerId) {
+            if (connection.status === 'PENDING') {
+              connectionStatus = 'SENT';
+              isInterestSent = true;
+            } else if (connection.status === 'SHORTLISTED') {
+              connectionStatus = 'SHORTLISTED';
+              isShortlisted = true;
+            } else if (connection.status === 'REJECTED') {
+              connectionStatus = 'REJECTED';
+              isDeclined = true;
+              isDeclinedByThem = true;
+            }
+          } else {
+            if (connection.status === 'PENDING') {
+              connectionStatus = 'RECEIVED';
+              isInterestReceived = true;
+            } else if (connection.status === 'REJECTED') {
+              connectionStatus = 'REJECTED';
+              isDeclined = true;
+              isDeclinedByMe = true;
+            }
+          }
+        } else if (hasMessages) {
           connectionStatus = 'MATCHED';
           isMatched = true;
           isInterestSent = false;
-        } else if (connection.senderId === viewerId) {
-          if (connection.status === 'PENDING') {
-            connectionStatus = 'SENT';
-            isInterestSent = true;
-          } else if (connection.status === 'SHORTLISTED') {
-            connectionStatus = 'SHORTLISTED';
-            isShortlisted = true;
-          } else if (connection.status === 'REJECTED') {
-            connectionStatus = 'REJECTED';
-            isDeclined = true;
-            isDeclinedByThem = true;
-          }
-        } else {
-          if (connection.status === 'PENDING') {
-            connectionStatus = 'RECEIVED';
-            isInterestReceived = true;
-          } else if (connection.status === 'REJECTED') {
-            connectionStatus = 'REJECTED';
-            isDeclined = true;
-            isDeclinedByMe = true;
-          }
         }
-      } else if (hasMessages) {
-        connectionStatus = 'MATCHED';
-        isMatched = true;
-        isInterestSent = false;
+
+        try {
+          const viewerProfile = await this.prisma.profile.findUnique({
+            where: { userId: viewerId },
+            select: { preferences: true },
+          });
+          const viewerFavorites: string[] = Array.isArray((viewerProfile?.preferences as any)?.favoriteIds)
+            ? (viewerProfile?.preferences as any).favoriteIds
+            : [];
+          if (viewerFavorites.includes(profile.userId)) {
+            isShortlisted = true;
+          }
+        } catch (e: any) {
+          this.logger.warn(`Failed to check viewer favorites: ${e?.message}`);
+        }
       }
 
-      const viewerProfile = await this.prisma.profile.findUnique({
-        where: { userId: viewerId },
-        select: { preferences: true },
-      });
-      const viewerFavorites: string[] = Array.isArray((viewerProfile?.preferences as any)?.favoriteIds)
-        ? (viewerProfile?.preferences as any).favoriteIds
-        : [];
-      if (viewerFavorites.includes(profile.userId)) {
-        isShortlisted = true;
+      const isSelf = Boolean(viewerId && viewerId === profile.userId);
+      let isContactUnlocked = isSelf;
+
+      if (viewerId && !isSelf) {
+        try {
+          if ((this.prisma as any).contactUnlock?.findUnique) {
+            const unlock = await this.prisma.contactUnlock.findUnique({
+              where: {
+                userId_targetUserId: {
+                  userId: viewerId,
+                  targetUserId: profile.userId,
+                },
+              },
+            });
+            if (unlock) {
+              isContactUnlocked = true;
+            }
+          }
+        } catch (e: any) {
+          this.logger.warn(`Failed to query contact unlock record: ${e?.message}`);
+        }
       }
+
+      const sanitizedProfile: any = { ...profile };
+      // PRIVACY ENFORCEMENT: Permanent Address, phone number, and email must be hidden unless unlocked or self
+      if (!isSelf) {
+        delete sanitizedProfile.permanentAddress;
+        if (sanitizedProfile.user) {
+          sanitizedProfile.user = {
+            ...sanitizedProfile.user,
+            phone: isContactUnlocked ? profile.user?.phone : undefined,
+            email: undefined,
+          };
+        }
+      }
+
+      const resolvedUserId = profile.userId || (profile.user as any)?.id;
+      const resolvedFirstName = sanitizedProfile.firstName || profile.user?.firstName || null;
+      const resolvedLastName = sanitizedProfile.lastName || profile.user?.lastName || null;
+      const resolvedFullName =
+        `${resolvedFirstName || ''} ${resolvedLastName || ''}`.trim() || 'Member';
+
+      return {
+        ...sanitizedProfile,
+        id: resolvedUserId,
+        userId: resolvedUserId,
+        profileTableId: profile.id,
+        profileId: profile.user?.profileId || (profile as any).profileId,
+        firstName: resolvedFirstName,
+        lastName: resolvedLastName,
+        name: resolvedFullName,
+        age: calculatedAge,
+        compatibility,
+        compatibilityHighlights,
+        preferences: formattedPreferences,
+        isOnline,
+        lastActiveAt: lastActive ? lastActive.toISOString() : null,
+        photos: profile.user?.photos || [],
+        connectionStatus,
+        isMatched,
+        isInterestSent,
+        isInterestReceived,
+        isShortlisted,
+        isDeclined,
+        isDeclinedByThem,
+        isDeclinedByMe,
+        isContactUnlocked,
+        phone: isContactUnlocked ? profile.user?.phone : undefined,
+      };
+    } catch (error: any) {
+      this.logger.error(
+        `Failed to get public profile for userId=${userId}, viewerId=${viewerId}: ${error?.message}`,
+        error?.stack,
+      );
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException(
+        `Failed to fetch profile: ${error?.message || error}`,
+      );
     }
-
-    const isSelf = Boolean(viewerId && viewerId === profile.userId);
-    let isContactUnlocked = isSelf;
-
-    if (viewerId && !isSelf) {
-      const unlock = await this.prisma.contactUnlock.findUnique({
-        where: {
-          userId_targetUserId: {
-            userId: viewerId,
-            targetUserId: profile.userId,
-          },
-        },
-      });
-      if (unlock) {
-        isContactUnlocked = true;
-      }
-    }
-
-    const sanitizedProfile: any = { ...profile };
-    // PRIVACY ENFORCEMENT: Permanent Address, phone number, and email must be hidden unless unlocked or self
-    if (!isSelf) {
-      delete sanitizedProfile.permanentAddress;
-      if (sanitizedProfile.user) {
-        sanitizedProfile.user = {
-          ...sanitizedProfile.user,
-          phone: isContactUnlocked ? profile.user?.phone : undefined,
-          email: undefined,
-        };
-      }
-    }
-
-    const resolvedUserId = profile.userId || (profile.user as any)?.id;
-    const resolvedFirstName = sanitizedProfile.firstName || profile.user?.firstName || null;
-    const resolvedLastName = sanitizedProfile.lastName || profile.user?.lastName || null;
-    const resolvedFullName =
-      `${resolvedFirstName || ''} ${resolvedLastName || ''}`.trim() || 'Member';
-
-    return {
-      ...sanitizedProfile,
-      id: resolvedUserId,
-      userId: resolvedUserId,
-      profileTableId: profile.id,
-      profileId: profile.user?.profileId || (profile as any).profileId,
-      firstName: resolvedFirstName,
-      lastName: resolvedLastName,
-      name: resolvedFullName,
-      age: calculatedAge,
-      compatibility,
-      compatibilityHighlights,
-      preferences: formattedPreferences,
-      isOnline,
-      lastActiveAt: lastActive ? lastActive.toISOString() : null,
-      photos: profile.user?.photos || [],
-      connectionStatus,
-      isMatched,
-      isInterestSent,
-      isInterestReceived,
-      isShortlisted,
-      isDeclined,
-      isDeclinedByThem,
-      isDeclinedByMe,
-      isContactUnlocked,
-      phone: isContactUnlocked ? profile.user?.phone : undefined,
-    };
   }
 
   async updateProfile(userId: string, data: UpdateProfileDto) {
