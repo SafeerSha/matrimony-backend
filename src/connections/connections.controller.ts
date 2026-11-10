@@ -1,4 +1,5 @@
 import { Controller, Post, Delete, Get, Param, UseGuards, Query } from '@nestjs/common';
+import { Throttle } from '../common/decorators/throttle.decorator';
 import { ConnectionsService } from './connections.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -11,6 +12,7 @@ import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 export class ConnectionsController {
   constructor(private readonly connectionsService: ConnectionsService) {}
 
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   @Post('interest/:userId')
   async sendInterest(@CurrentUser() user: any, @Param('userId') targetId: string) {
     return this.connectionsService.sendInterest(user.sub, targetId);
@@ -36,6 +38,7 @@ export class ConnectionsController {
     return this.connectionsService.rejectInterest(user.sub, senderId);
   }
 
+  @Throttle({ default: { limit: 30, ttl: 60000 } })
   @Post('shortlist/:userId')
   async shortlistProfile(@CurrentUser() user: any, @Param('userId') targetId: string) {
     return this.connectionsService.shortlistProfile(user.sub, targetId);

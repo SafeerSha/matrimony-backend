@@ -1,4 +1,5 @@
 import { Controller, Get, Post, Put, Param, Body, UseGuards } from '@nestjs/common';
+import { Throttle } from '../common/decorators/throttle.decorator';
 import { ChatService } from './chat.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SubscriptionPermitGuard, RequirePermit } from '../subscription/guards/subscription-permit.guard';
@@ -17,12 +18,14 @@ export class ChatController {
     return this.chatService.getConversations(user.sub);
   }
 
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   @Post('initiate/:contactId')
   @RequirePermit()
   async initiateChat(@CurrentUser() user: any, @Param('contactId') contactId: string) {
     return this.chatService.initiateChat(user.sub, contactId);
   }
 
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   @Post('initiate')
   @RequirePermit()
   async initiateChatBody(@CurrentUser() user: any, @Body('contactId') contactId: string) {
@@ -43,6 +46,7 @@ export class ChatController {
     return this.chatService.getChatHistory(user.sub, contactId);
   }
 
+  @Throttle({ default: { limit: 30, ttl: 60000 } })
   @Post('messages')
   @RequirePermit()
   async sendMessageHttp(
