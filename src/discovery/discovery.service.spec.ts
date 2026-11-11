@@ -1,3 +1,4 @@
+import { jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 import { DiscoveryService } from './discovery.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -9,6 +10,7 @@ describe('DiscoveryService', () => {
 
   const mockPrisma = {
     user: {
+      findUnique: jest.fn(),
       findMany: jest.fn(),
       count: jest.fn(),
     },
@@ -18,6 +20,7 @@ describe('DiscoveryService', () => {
   };
 
   beforeEach(async () => {
+    mockPrisma.user.findUnique.mockResolvedValue(null);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DiscoveryService,
@@ -54,6 +57,17 @@ describe('DiscoveryService', () => {
       expect((result.data[0] as any).passwordHash).toBeUndefined(); // ensure sanitization
       expect(result.meta.total).toBe(2);
       expect(result.meta.page).toBe(1);
+      const findManyCall = mockPrisma.user.findMany.mock.calls[0][0];
+      expect(findManyCall.where).toEqual(
+        expect.objectContaining({
+          id: { not: currentUserId },
+          status: 'ACTIVE',
+          isBanned: false,
+          deletedAt: null,
+          deactivatedAt: null,
+          role: 'USER',
+        }),
+      );
     });
     it('should filter by education, occupation, and employmentStatus', async () => {
       const currentUserId = '1';
@@ -116,18 +130,25 @@ describe('DiscoveryService', () => {
     it('should return recommended users based on preferences including education and occupation', async () => {
       const currentUserId = '1';
 
-      mockPrisma.preference.findUnique.mockResolvedValue({
-        minAge: 22,
-        maxAge: 32,
-        education: 'Bachelors',
-        occupations: 'Doctor',
-        employmentStatuses: 'Employed (Private / Corporate)',
+      mockPrisma.user.findUnique.mockResolvedValue({
+        id: currentUserId,
+        profile: {},
+        preference: {
+          minAge: 22,
+          maxAge: 32,
+          education: 'Bachelors',
+          occupations: 'Doctor',
+          employmentStatuses: 'Employed (Private / Corporate)',
+        },
       });
       mockPrisma.user.findMany.mockResolvedValue([{ id: '2', passwordHash: 'hash' }]);
       mockPrisma.user.count.mockResolvedValue(1);
 
       const result = await service.getRecommendations(currentUserId);
-      expect(prisma.preference.findUnique).toHaveBeenCalledWith({ where: { userId: currentUserId } });
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { id: currentUserId },
+        include: { profile: true, preference: true },
+      });
       expect(prisma.user.findMany).toHaveBeenCalled();
       const findManyCall = mockPrisma.user.findMany.mock.calls[0][0];
       const conditions = findManyCall.where.profile.AND;
@@ -142,7 +163,7 @@ describe('DiscoveryService', () => {
     });
 
     it('should fallback to basic search if no preferences found', async () => {
-      mockPrisma.preference.findUnique.mockResolvedValue(null);
+      mockPrisma.user.findUnique.mockResolvedValue(null);
       mockPrisma.user.findMany.mockResolvedValue([]);
       mockPrisma.user.count.mockResolvedValue(0);
 

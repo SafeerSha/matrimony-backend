@@ -212,12 +212,63 @@ export class ProfilesService {
     };
   }
 
-  async getPublicProfile(userId: string, viewerId?: string) {
+  async getPublicProfile(
+    userId: string,
+    viewerId?: string,
+    options?: { excludeSelf?: boolean },
+  ) {
     try {
       const rawId = (userId || '').trim();
-      const imcNormalized = rawId.toUpperCase().startsWith('IMC-')
-        ? rawId.toUpperCase()
-        : `IMC-${rawId.toUpperCase()}`;
+      if (!rawId || rawId.length > 64) {
+        throw new BadRequestException({
+          code: 'INVALID_PROFILE_IDENTIFIER',
+          message: 'Please provide a valid profile identifier.',
+        });
+      }
+
+      const upperRaw = rawId.toUpperCase();
+      const imcNormalized = upperRaw.startsWith('IMC-') || upperRaw.startsWith('LT-')
+        ? upperRaw
+        : `IMC-${upperRaw}`;
+
+      if (options?.excludeSelf) {
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawId);
+        const isMemberId = /^(?:IMC|LT)-[A-Z0-9]{6}$/i.test(imcNormalized) || /^[A-Z0-9]{6}$/i.test(rawId);
+        if (!isUuid && !isMemberId) {
+          throw new BadRequestException({
+            code: 'INVALID_MEMBER_ID_FORMAT',
+            message: 'Please enter a valid 6-character Member ID (e.g. IMC-A00025).',
+          });
+        }
+      }
+
+      const blockedFilter = viewerId
+        ? [
+            {
+              receivedConnections: {
+                some: { senderId: viewerId, status: 'BLOCKED' },
+              },
+            },
+            {
+              sentConnections: {
+                some: { receiverId: viewerId, status: 'BLOCKED' },
+              },
+            },
+          ]
+        : [];
+
+      const activePublicUserWhere: any = {
+        isBanned: false,
+        status: 'ACTIVE',
+        deletedAt: null,
+        deactivatedAt: null,
+        role: 'USER',
+        NOT: [
+          { email: { contains: 'demo.ishtamchat.com' } },
+          { id: { in: ['meera', 'ananya'] } },
+          ...blockedFilter,
+        ],
+      };
 
       const [profile, viewer] = await Promise.all([
         this.prisma.profile.findFirst({
@@ -230,7 +281,7 @@ export class ProfilesService {
               { user: { profileId: { equals: rawId, mode: 'insensitive' } } },
               { user: { profileId: { equals: imcNormalized, mode: 'insensitive' } } },
             ],
-            user: { isBanned: false },
+            user: activePublicUserWhere,
           },
           include: {
             user: {
@@ -266,7 +317,32 @@ export class ProfilesService {
           : Promise.resolve(null),
       ]);
 
-      if (!profile) {
+      if (options?.excludeSelf && viewerId) {
+        const viewerProfileId = viewer?.profileId?.toUpperCase();
+        const viewerProfileRowId = viewer?.profile?.id;
+        const matchesSelf =
+          profile?.userId === viewerId ||
+          rawId.toLowerCase() === viewerId.toLowerCase() ||
+          (viewerProfileRowId && rawId.toLowerCase() === viewerProfileRowId.toLowerCase()) ||
+          (viewerProfileId &&
+            (upperRaw === viewerProfileId || imcNormalized === viewerProfileId));
+
+        if (matchesSelf) {
+          throw new BadRequestException({
+            code: 'SELF_PROFILE_SEARCH',
+            message: 'You cannot search for your own Member ID.',
+          });
+        }
+      }
+
+      if (
+        !profile ||
+        !profile.user ||
+        (profile.user.status !== undefined && profile.user.status !== 'ACTIVE') ||
+        (profile.user as any).isBanned === true ||
+        Boolean((profile.user as any).deletedAt) ||
+        Boolean((profile.user as any).deactivatedAt)
+      ) {
         throw new NotFoundException('Profile not found');
       }
 
