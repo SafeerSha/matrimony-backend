@@ -27,6 +27,15 @@ describe('ProfilesService', () => {
       findFirst: jest.fn(),
       update: jest.fn(),
     },
+    connection: {
+      findFirst: jest.fn(),
+    },
+    message: {
+      findFirst: jest.fn(),
+    },
+    contactUnlock: {
+      findUnique: jest.fn(),
+    },
   };
 
   beforeEach(async () => {
@@ -311,6 +320,110 @@ describe('ProfilesService', () => {
 
       expect(result.preferences).toBeDefined();
       expect(result.preferences.religions).toEqual(['Hindu', 'Christian']);
+    });
+  });
+
+  describe('getPublicProfile', () => {
+    it('should query only active, non-deleted, non-deactivated, non-banned, USER role, non-blocked profiles', async () => {
+      const viewerId = '11111111-1111-1111-1111-111111111111';
+      const targetId = '22222222-2222-2222-2222-222222222222';
+      mockPrisma.profile.findFirst.mockResolvedValue({
+        id: 'prof-2',
+        userId: targetId,
+        dateOfBirth: new Date('1998-05-01T00:00:00.000Z'),
+        user: {
+          id: targetId,
+          firstName: 'Demo',
+          lastName: 'User',
+          profileId: 'IMC-A00002',
+          status: 'ACTIVE',
+          phone: '+919876543210',
+          photos: [],
+        },
+      });
+      mockPrisma.user.findUnique.mockResolvedValue({
+        id: viewerId,
+        profileId: 'IMC-A00001',
+        profile: { id: 'prof-1' },
+      });
+      mockPrisma.connection.findFirst.mockResolvedValue(null);
+      mockPrisma.message.findFirst.mockResolvedValue(null);
+      mockPrisma.profile.findUnique.mockResolvedValue({ preferences: {} });
+      mockPrisma.contactUnlock.findUnique.mockResolvedValue(null);
+
+      const res = await service.getPublicProfile('IMC-A00002', viewerId, { excludeSelf: true });
+
+      expect(res.profileId).toBe('IMC-A00002');
+      expect(mockPrisma.profile.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            user: expect.objectContaining({
+              isBanned: false,
+              status: 'ACTIVE',
+              deletedAt: null,
+              deactivatedAt: null,
+              role: 'USER',
+              NOT: expect.arrayContaining([
+                { receivedConnections: { some: { senderId: viewerId, status: 'BLOCKED' } } },
+                { sentConnections: { some: { receiverId: viewerId, status: 'BLOCKED' } } },
+              ]),
+            }),
+          }),
+        }),
+      );
+    });
+
+    it('should reject searching for own Member ID when excludeSelf is true', async () => {
+      const viewerId = '11111111-1111-1111-1111-111111111111';
+      mockPrisma.profile.findFirst.mockResolvedValue({
+        id: 'prof-1',
+        userId: viewerId,
+        user: {
+          id: viewerId,
+          profileId: 'IMC-A00001',
+          status: 'ACTIVE',
+          photos: [],
+        },
+      });
+      mockPrisma.user.findUnique.mockResolvedValue({
+        id: viewerId,
+        profileId: 'IMC-A00001',
+        profile: { id: 'prof-1' },
+      });
+
+      await expect(
+        service.getPublicProfile('IMC-A00001', viewerId, { excludeSelf: true }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw NotFoundException if target profile is DELETED or has deletedAt set', async () => {
+      const viewerId = '11111111-1111-1111-1111-111111111111';
+      mockPrisma.profile.findFirst.mockResolvedValue({
+        id: 'prof-del',
+        userId: '33333333-3333-3333-3333-333333333333',
+        user: {
+          id: '33333333-3333-3333-3333-333333333333',
+          profileId: 'IMC-A00009',
+          status: 'DELETED',
+          deletedAt: new Date(),
+          photos: [],
+        },
+      });
+      mockPrisma.user.findUnique.mockResolvedValue({
+        id: viewerId,
+        profileId: 'IMC-A00001',
+        profile: { id: 'prof-1' },
+      });
+
+      await expect(
+        service.getPublicProfile('IMC-A00009', viewerId, { excludeSelf: true }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should reject invalid Member ID formats when excludeSelf is true', async () => {
+      await expect(
+        service.getPublicProfile('IMC-12', '11111111-1111-1111-1111-111111111111', { excludeSelf: true }),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 });

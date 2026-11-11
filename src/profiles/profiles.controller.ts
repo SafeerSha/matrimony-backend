@@ -7,6 +7,7 @@ import {
   Body,
   UseGuards,
   Param,
+  Query,
   ForbiddenException,
 } from '@nestjs/common';
 import { ProfilesService } from './profiles.service';
@@ -54,8 +55,15 @@ export class ProfilesController {
   }
 
   @Get(':id')
-  async getPublicProfile(@CurrentUser() user: any, @Param('id') id: string) {
-    return this.profilesService.getPublicProfile(id, user?.sub);
+  async getPublicProfile(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Query('excludeSelf') excludeSelf?: string,
+  ) {
+    const viewerId = user?.sub || user?.id;
+    return this.profilesService.getPublicProfile(id, viewerId, {
+      excludeSelf: excludeSelf === 'true' || excludeSelf === '1',
+    });
   }
 
   @Put('me')

@@ -23,6 +23,10 @@ export class DiscoveryService {
     const whereClause: any = {
       id: { not: currentUserId },
       status: 'ACTIVE',
+      isBanned: false,
+      deletedAt: null,
+      deactivatedAt: null,
+      role: 'USER',
       NOT: [
         { email: { contains: 'demo.ishtamchat.com' } },
         { id: { in: ['meera', 'ananya'] } },
