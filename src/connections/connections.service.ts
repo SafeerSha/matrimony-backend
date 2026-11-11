@@ -528,6 +528,11 @@ export class ConnectionsService {
       firstName: true,
       lastName: true,
       profileId: true,
+      lastActiveAt: true,
+      status: true,
+      isBanned: true,
+      deletedAt: true,
+      deactivatedAt: true,
       photos: { select: { url: true, isPrimary: true, isVerified: true } },
       profile: true,
     };
@@ -598,7 +603,13 @@ export class ConnectionsService {
 
         if (remainingFavoriteIds.length > 0) {
           const favoriteUsers = await this.prisma.user.findMany({
-            where: { id: { in: remainingFavoriteIds } },
+            where: {
+              id: { in: remainingFavoriteIds },
+              status: 'ACTIVE',
+              isBanned: false,
+              deletedAt: null,
+              deactivatedAt: null,
+            },
             select: userSelect,
           });
 
@@ -685,25 +696,62 @@ export class ConnectionsService {
         throw new BadRequestException('Invalid connection type requested');
     }
 
-    return connections.map((conn) => {
-      const partner =
-        conn.partner ||
-        (type === 'matches'
-          ? conn.senderId === userId
-            ? conn.receiver
-            : conn.sender
-          : conn.receiver || conn.sender);
+    const FIVE_MINUTES_MS = 5 * 60 * 1000;
 
-      if (partner) {
-        const score = calculateCompatibility(currentUser, partner);
-        if (partner.profile) {
-          partner.profile.compatibility = score;
-          delete partner.profile.permanentAddress;
+    return connections
+      .map((conn) => {
+        const partner =
+          conn.partner ||
+          (type === 'matches'
+            ? conn.senderId === userId
+              ? conn.receiver
+              : conn.sender
+            : conn.receiver || conn.sender);
+
+        return { conn, partner };
+      })
+      .filter(({ partner }) => {
+        if (!partner) return true;
+        if (
+          partner.isBanned === true ||
+          Boolean(partner.deletedAt) ||
+          Boolean(partner.deactivatedAt) ||
+          (partner.status && partner.status !== 'ACTIVE')
+        ) {
+          return false;
         }
-        partner.compatibility = score;
-        (conn as any).compatibility = score;
-      }
-      return conn;
-    });
+        return true;
+      })
+      .map(({ conn, partner }) => {
+        if (partner) {
+          const score = calculateCompatibility(currentUser, partner);
+          if (partner.profile) {
+            partner.profile.compatibility = score;
+            delete partner.profile.permanentAddress;
+          }
+          partner.compatibility = score;
+          (conn as any).compatibility = score;
+
+          const parsedLastActive = partner.lastActiveAt ? new Date(partner.lastActiveAt) : null;
+          const lastActive =
+            parsedLastActive && !isNaN(parsedLastActive.getTime()) ? parsedLastActive : null;
+          const isOnline = lastActive
+            ? Date.now() - lastActive.getTime() <= FIVE_MINUTES_MS
+            : false;
+          const lastActiveIso = lastActive ? lastActive.toISOString() : null;
+
+          partner.isOnline = isOnline;
+          partner.online = isOnline;
+          partner.lastActiveAt = lastActiveIso;
+          (conn as any).isOnline = isOnline;
+          (conn as any).lastActiveAt = lastActiveIso;
+
+          delete partner.isBanned;
+          delete partner.deletedAt;
+          delete partner.deactivatedAt;
+          delete partner.status;
+        }
+        return conn;
+      });
   }
 }

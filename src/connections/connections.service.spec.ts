@@ -1,12 +1,22 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConnectionsService } from './connections.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { SubscriptionService } from '../subscription/subscription.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 
+jest.unstable_mockModule('../chat/chat.gateway', () => ({
+  ChatGateway: class MockChatGateway {
+    isUserOnline = jest.fn(() => false);
+    emitToUser = jest.fn(() => false);
+  },
+}));
+
+const { ChatGateway } = await import('../chat/chat.gateway');
+const { ConnectionsService } = await import('./connections.service');
+
 describe('ConnectionsService', () => {
-  let service: ConnectionsService;
+  let service: any;
   let prisma: PrismaService;
   let notificationsService: NotificationsService;
 
@@ -14,6 +24,12 @@ describe('ConnectionsService', () => {
     user: {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
+      findMany: jest.fn(),
+    },
+    profile: {
+      findFirst: jest.fn(),
+      findUnique: jest.fn(),
+      update: jest.fn(),
     },
     connection: {
       findFirst: jest.fn(),
@@ -26,20 +42,35 @@ describe('ConnectionsService', () => {
     },
   };
 
-  const mockNotifications = {
+  const mockNotifications: any = {
     createNotification: jest.fn(),
   };
 
+  const mockChatGateway: any = {
+    isUserOnline: jest.fn(),
+    emitToUser: jest.fn(),
+  };
+
+  const mockSubscriptionService: any = {
+    checkAndIncrementInterestQuota: jest.fn(),
+  };
+
   beforeEach(async () => {
+    mockChatGateway.isUserOnline.mockReturnValue(false);
+    mockChatGateway.emitToUser.mockReturnValue(false);
+    mockSubscriptionService.checkAndIncrementInterestQuota.mockResolvedValue({ allowed: true });
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ConnectionsService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: NotificationsService, useValue: mockNotifications },
+        { provide: ChatGateway, useValue: mockChatGateway },
+        { provide: SubscriptionService, useValue: mockSubscriptionService },
       ],
     }).compile();
 
-    service = module.get<ConnectionsService>(ConnectionsService);
+    service = module.get(ConnectionsService);
     prisma = module.get<PrismaService>(PrismaService);
     notificationsService = module.get<NotificationsService>(NotificationsService);
   });
@@ -119,21 +150,23 @@ describe('ConnectionsService', () => {
 
   describe('shortlistProfile', () => {
     it('should throw BadRequestException if user shortlists themselves', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ id: 'u1' });
       await expect(service.shortlistProfile('u1', 'u1')).rejects.toThrow(BadRequestException);
     });
 
-    it('should upsert connection with SHORTLISTED status', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ id: 'u2' });
+    it('should create connection with SHORTLISTED status when no prior connection exists', async () => {
+      mockPrisma.user.findUnique
+        .mockResolvedValueOnce({ id: 'u2' }) // resolveUserId
+        .mockResolvedValueOnce({ id: 'u2', profile: {}, photos: [] }); // targetUser
+      mockPrisma.connection.findFirst.mockResolvedValue(null);
       const mockResult = { id: 'c-short', senderId: 'u1', receiverId: 'u2', status: 'SHORTLISTED' };
-      mockPrisma.connection.upsert.mockResolvedValue(mockResult);
+      mockPrisma.connection.create.mockResolvedValue(mockResult);
 
       const result = await service.shortlistProfile('u1', 'u2');
       expect(result).toEqual(mockResult);
-      expect(mockPrisma.connection.upsert).toHaveBeenCalledWith(
+      expect(mockPrisma.connection.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { senderId_receiverId: { senderId: 'u1', receiverId: 'u2' } },
-          update: { status: 'SHORTLISTED' },
-          create: { senderId: 'u1', receiverId: 'u2', status: 'SHORTLISTED' },
+          data: { senderId: 'u1', receiverId: 'u2', status: 'SHORTLISTED' },
         })
       );
     });
@@ -141,15 +174,24 @@ describe('ConnectionsService', () => {
 
   describe('removeShortlist', () => {
     it('should throw BadRequestException if user removes themselves', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ id: 'u1' });
       await expect(service.removeShortlist('u1', 'u1')).rejects.toThrow(BadRequestException);
     });
 
-    it('should throw NotFoundException if shortlisted profile not found', async () => {
+    it('should idempotently succeed when only favoriteIds entry exists (no SHORTLISTED connection)', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ id: 'u2' });
       mockPrisma.connection.findFirst.mockResolvedValue(null);
-      await expect(service.removeShortlist('u1', 'u2')).rejects.toThrow(NotFoundException);
+      const result = await service.removeShortlist('u1', 'u2');
+      expect(result).toEqual({
+        success: true,
+        message: 'Profile removed from shortlist',
+        targetId: 'u2',
+      });
+      expect(mockPrisma.connection.delete).not.toHaveBeenCalled();
     });
 
-    it('should delete connection record and return success confirmation', async () => {
+    it('should delete SHORTLISTED connection record and return success confirmation', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ id: 'u2' });
       const existing = { id: 'c-short-123', senderId: 'u1', receiverId: 'u2', status: 'SHORTLISTED' };
       mockPrisma.connection.findFirst.mockResolvedValue(existing);
       mockPrisma.connection.delete.mockResolvedValue(existing);
@@ -158,7 +200,6 @@ describe('ConnectionsService', () => {
       expect(result).toEqual({
         success: true,
         message: 'Profile removed from shortlist',
-        id: 'c-short-123',
         targetId: 'u2',
       });
       expect(mockPrisma.connection.delete).toHaveBeenCalledWith({
@@ -275,6 +316,98 @@ describe('ConnectionsService', () => {
 
     it('should throw BadRequestException on invalid type', async () => {
       await expect(service.getConnections('user-me', 'invalid' as any)).rejects.toThrow(BadRequestException);
+    });
+
+    it('should compute real isOnline and lastActiveAt for shortlisted_by_me and exclude inactive accounts', async () => {
+      const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+      const oneMinuteAgo = new Date(Date.now() - 60 * 1000);
+
+      mockPrisma.connection.findMany.mockResolvedValue([
+        {
+          id: 'c-old',
+          senderId: 'user-me',
+          receiverId: 'u-old',
+          status: 'SHORTLISTED',
+          receiver: {
+            id: 'u-old',
+            firstName: 'Christy',
+            lastName: 'George',
+            profileId: 'IMC-A00009',
+            lastActiveAt: threeDaysAgo,
+            status: 'ACTIVE',
+            isBanned: false,
+            deletedAt: null,
+            deactivatedAt: null,
+            photos: [],
+            profile: { city: 'Kottayam', occupation: 'Data Engineer' },
+          },
+        },
+        {
+          id: 'c-live',
+          senderId: 'user-me',
+          receiverId: 'u-live',
+          status: 'SHORTLISTED',
+          receiver: {
+            id: 'u-live',
+            firstName: 'Active',
+            lastName: 'User',
+            profileId: 'IMC-A00010',
+            lastActiveAt: oneMinuteAgo,
+            status: 'ACTIVE',
+            isBanned: false,
+            deletedAt: null,
+            deactivatedAt: null,
+            photos: [],
+            profile: { city: 'Kochi', occupation: 'Doctor' },
+          },
+        },
+        {
+          id: 'c-deleted',
+          senderId: 'user-me',
+          receiverId: 'u-del',
+          status: 'SHORTLISTED',
+          receiver: {
+            id: 'u-del',
+            firstName: 'Deleted',
+            lastName: 'User',
+            profileId: 'IMC-A00011',
+            lastActiveAt: oneMinuteAgo,
+            status: 'DELETED',
+            isBanned: false,
+            deletedAt: new Date(),
+            deactivatedAt: null,
+            photos: [],
+            profile: { city: 'Kochi' },
+          },
+        },
+      ]);
+      mockPrisma.profile.findUnique.mockResolvedValue({ preferences: { favoriteIds: [] } });
+
+      const result = await service.getConnections('user-me', 'shortlisted_by_me');
+
+      expect(mockPrisma.connection.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: {
+            receiver: {
+              select: expect.objectContaining({
+                lastActiveAt: true,
+                profileId: true,
+              }),
+            },
+          },
+        }),
+      );
+
+      expect(result).toHaveLength(2);
+      expect(result[0].partner.id).toBe('u-old');
+      expect(result[0].partner.isOnline).toBe(false);
+      expect(result[0].partner.online).toBe(false);
+      expect(result[0].partner.lastActiveAt).toBe(threeDaysAgo.toISOString());
+
+      expect(result[1].partner.id).toBe('u-live');
+      expect(result[1].partner.isOnline).toBe(true);
+      expect(result[1].partner.online).toBe(true);
+      expect(result[1].partner.lastActiveAt).toBe(oneMinuteAgo.toISOString());
     });
   });
 });
