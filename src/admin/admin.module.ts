@@ -5,9 +5,10 @@ import { AnalyticsService } from './analytics.service';
 import { StorageModule } from '../storage/storage.module';
 import { SubscriptionModule } from '../subscription/subscription.module';
 import { ChatModule } from '../chat/chat.module';
+import { UsersModule } from '../users/users.module';
 
 @Module({
-  imports: [StorageModule, SubscriptionModule, forwardRef(() => ChatModule)],
+  imports: [StorageModule, SubscriptionModule, UsersModule, forwardRef(() => ChatModule)],
   providers: [AdminService, AnalyticsService],
   controllers: [AdminController],
   exports: [AdminService, AnalyticsService],

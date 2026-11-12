@@ -28,6 +28,28 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         CREATE UNIQUE INDEX IF NOT EXISTS "ContactUnlock_userId_targetUserId_key" ON "ContactUnlock"("userId", "targetUserId");
         CREATE INDEX IF NOT EXISTS "ContactUnlock_userId_idx" ON "ContactUnlock"("userId");
         CREATE INDEX IF NOT EXISTS "ContactUnlock_targetUserId_idx" ON "ContactUnlock"("targetUserId");
+
+        CREATE TABLE IF NOT EXISTS "Feedback" (
+            "id" TEXT NOT NULL,
+            "userId" TEXT,
+            "rating" INTEGER NOT NULL,
+            "type" TEXT NOT NULL,
+            "message" TEXT NOT NULL,
+            "status" TEXT NOT NULL DEFAULT 'SUBMITTED',
+            "priority" TEXT NOT NULL DEFAULT 'MEDIUM',
+            "rmNotes" TEXT,
+            "reviewedById" TEXT,
+            "reviewedAt" TIMESTAMP(3),
+            "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT "Feedback_pkey" PRIMARY KEY ("id")
+        );
+        ALTER TABLE "Feedback" ADD COLUMN IF NOT EXISTS "priority" TEXT NOT NULL DEFAULT 'MEDIUM';
+        ALTER TABLE "Feedback" ADD COLUMN IF NOT EXISTS "rmNotes" TEXT;
+        ALTER TABLE "Feedback" ADD COLUMN IF NOT EXISTS "reviewedById" TEXT;
+        ALTER TABLE "Feedback" ADD COLUMN IF NOT EXISTS "reviewedAt" TIMESTAMP(3);
+        CREATE INDEX IF NOT EXISTS "Feedback_status_idx" ON "Feedback"("status");
+        CREATE INDEX IF NOT EXISTS "Feedback_priority_idx" ON "Feedback"("priority");
       `);
       this.logger.log('Core tables checked and ensured.');
     } catch (e: any) {

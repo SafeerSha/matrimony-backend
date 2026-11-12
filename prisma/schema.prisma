@@ -340,17 +340,23 @@ model SupportInquiry {
 }
 
 model Feedback {
-  id        String   @id @default(uuid())
-  userId    String?
-  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
-  rating    Int      // 1 to 5
-  type      String   // 'general', 'feature', 'bug'
-  message   String
-  status    String   @default("SUBMITTED") // 'SUBMITTED', 'REVIEWED', 'ACTIONED'
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String    @id @default(uuid())
+  userId       String?
+  user         User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  rating       Int       // 1 to 5
+  type         String    // 'general', 'feature', 'bug'
+  message      String
+  status       String    @default("SUBMITTED") // 'SUBMITTED', 'IN_REVIEW', 'REVIEWED', 'PLANNED', 'RESOLVED', 'ACTIONED', 'DISMISSED'
+  priority     String    @default("MEDIUM") // 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'
+  rmNotes      String?
+  reviewedById String?
+  reviewedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   @@index([userId])
   @@index([type])
+  @@index([status])
+  @@index([priority])
   @@index([createdAt])
 }

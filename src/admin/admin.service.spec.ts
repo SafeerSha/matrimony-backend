@@ -1,13 +1,21 @@
 import { jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
-import { AdminService } from './admin.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { STORAGE_SERVICE, StorageService } from '../storage/storage.interface';
 import { SubscriptionService } from '../subscription/subscription.service';
-import { NotFoundException } from '@nestjs/common';
+import { UsersService } from '../users/users.service';
+import { ConflictException, NotFoundException } from '@nestjs/common';
+
+jest.unstable_mockModule('../chat/chat.gateway', () => ({
+  ChatGateway: class MockChatGateway {
+    isUserOnline = jest.fn(() => false);
+  },
+}));
+
+const { AdminService } = await import('./admin.service');
 
 describe('AdminService', () => {
-  let service: AdminService;
+  let service: any;
   let prisma: PrismaService;
   let storageService: StorageService;
 
@@ -16,6 +24,7 @@ describe('AdminService', () => {
       findMany: jest.fn<any>(),
       count: jest.fn<any>(),
       findUnique: jest.fn<any>(),
+      create: jest.fn<any>(),
       update: jest.fn<any>(),
       delete: jest.fn<any>(),
     },
@@ -44,17 +53,23 @@ describe('AdminService', () => {
     deleteFile: jest.fn<any>(),
   };
 
+  const mockUsersService = {
+    generateUniqueProfileId: jest.fn<any>().mockResolvedValue('IMC-A00123'),
+  };
+
   beforeEach(async () => {
+    mockUsersService.generateUniqueProfileId.mockResolvedValue('IMC-A00123');
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AdminService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: STORAGE_SERVICE, useValue: mockStorageService },
         { provide: SubscriptionService, useValue: mockSubscriptionService },
+        { provide: UsersService, useValue: mockUsersService },
       ],
     }).compile();
 
-    service = module.get<AdminService>(AdminService);
+    service = module.get(AdminService);
     prisma = module.get<PrismaService>(PrismaService);
     storageService = module.get<StorageService>(STORAGE_SERVICE);
   });
@@ -308,6 +323,83 @@ describe('AdminService', () => {
         storageProvider: 'local',
       });
       expect(mockPrisma.user.delete).toHaveBeenCalledWith({ where: { id: 'u1' } });
+    });
+  });
+
+  describe('createUser', () => {
+    it('should create a normal USER in DRAFT status with onboardingStep 1', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(null);
+      mockPrisma.user.create.mockResolvedValue({
+        id: 'u-new',
+        email: 'member@test.com',
+        role: 'USER',
+        status: 'DRAFT',
+        profileId: 'IMC-A00123',
+        firstName: 'Asha',
+        lastName: 'Menon',
+        profile: { onboardingStep: 1 },
+      });
+
+      const res = await service.createUser({
+        firstName: 'Asha',
+        lastName: 'Menon',
+        email: 'Member@Test.com',
+        password: 'Password123!',
+        role: 'USER',
+      });
+
+      expect(res.role).toBe('USER');
+      expect(res.status).toBe('DRAFT');
+      const createArg = mockPrisma.user.create.mock.calls[0][0];
+      expect(createArg.data.email).toBe('member@test.com');
+      expect(createArg.data.status).toBe('DRAFT');
+      expect(createArg.data.isPasswordEnabled).toBe(true);
+      expect(createArg.data.passwordHash).toBeDefined();
+      expect(createArg.data.passwordHash).not.toBe('Password123!');
+      expect(createArg.data.profile).toEqual({
+        create: { firstName: 'Asha', lastName: 'Menon', onboardingStep: 1 },
+      });
+      expect(createArg.select).not.toHaveProperty('passwordHash');
+    });
+
+    it('should create an RM user directly in ACTIVE status without onboarding profile', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(null);
+      mockPrisma.user.create.mockResolvedValue({
+        id: 'rm-new',
+        email: 'rm@test.com',
+        role: 'RM',
+        status: 'ACTIVE',
+        profileId: 'IMC-A00123',
+        firstName: 'Rahul',
+        lastName: 'Nair',
+      });
+
+      const res = await service.createUser({
+        firstName: 'Rahul',
+        lastName: 'Nair',
+        email: 'rm@test.com',
+        password: 'RmPassword123!',
+        role: 'RM',
+      });
+
+      expect(res.role).toBe('RM');
+      expect(res.status).toBe('ACTIVE');
+      const createArg = mockPrisma.user.create.mock.calls[0][0];
+      expect(createArg.data.status).toBe('ACTIVE');
+      expect(createArg.data.profile).toBeUndefined();
+    });
+
+    it('should throw ConflictException when email already exists', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ id: 'existing-1' });
+
+      await expect(
+        service.createUser({
+          firstName: 'Dup',
+          email: 'dup@test.com',
+          password: 'Password123!',
+          role: 'USER',
+        }),
+      ).rejects.toThrow(ConflictException);
     });
   });
 });

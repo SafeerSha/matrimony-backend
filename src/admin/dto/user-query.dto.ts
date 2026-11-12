@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsIn, IsInt, Min, Max, MaxLength } from 'class-validator';
+import { IsOptional, IsString, IsIn, IsInt, Min, Max, MaxLength, IsEmail, IsNotEmpty, MinLength } from 'class-validator';
 import { Type } from 'class-transformer';
 
 const PLAN_VALUES = ['ALL', 'BASIC', 'PAID'] as const;
@@ -76,4 +76,33 @@ export class AssignPlanBodyDto {
 export class VerifyPhotoBodyDto {
   @IsIn(['approved', 'rejected'], { message: 'status must be approved or rejected' })
   status!: 'approved' | 'rejected';
+}
+
+export class CreateAdminUserDto {
+  @IsString()
+  @IsNotEmpty({ message: 'First name is required' })
+  @MaxLength(100)
+  firstName!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  lastName?: string;
+
+  @IsEmail({}, { message: 'A valid email address is required' })
+  @MaxLength(255)
+  email!: string;
+
+  @IsString()
+  @MinLength(8, { message: 'Password must be at least 8 characters long' })
+  @MaxLength(128)
+  password!: string;
+
+  @IsIn(['USER', 'RM'], { message: 'role must be USER or RM' })
+  role!: 'USER' | 'RM';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  phone?: string;
 }
