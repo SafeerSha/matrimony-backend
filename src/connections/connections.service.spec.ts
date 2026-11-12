@@ -25,6 +25,7 @@ describe('ConnectionsService', () => {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
       findMany: jest.fn(),
+      count: jest.fn(),
     },
     profile: {
       findFirst: jest.fn(),
@@ -39,6 +40,7 @@ describe('ConnectionsService', () => {
       upsert: jest.fn(),
       delete: jest.fn(),
       findMany: jest.fn(),
+      count: jest.fn(),
     },
   };
 
@@ -242,16 +244,18 @@ describe('ConnectionsService', () => {
       ];
 
       mockPrisma.connection.findMany.mockResolvedValue(mockMatches);
+      mockPrisma.connection.count.mockResolvedValue(2);
 
       const result = await service.getConnections('user-me', 'matches');
-      expect(result).toHaveLength(2);
-      expect(result[0].partner.id).toBe('user-partner-1');
-      expect(result[0].partner.firstName).toBe('Priya');
-      expect(result[0].isMutualMatch).toBe(true);
+      expect(result.data).toHaveLength(2);
+      expect(result.meta).toEqual({ page: 1, limit: 50, total: 2, totalPages: 1 });
+      expect(result.data[0].partner.id).toBe('user-partner-1');
+      expect(result.data[0].partner.firstName).toBe('Priya');
+      expect(result.data[0].isMutualMatch).toBe(true);
 
-      expect(result[1].partner.id).toBe('user-partner-2');
-      expect(result[1].partner.firstName).toBe('Aarav');
-      expect(result[1].isMutualMatch).toBe(true);
+      expect(result.data[1].partner.id).toBe('user-partner-2');
+      expect(result.data[1].partner.firstName).toBe('Aarav');
+      expect(result.data[1].isMutualMatch).toBe(true);
     });
 
     it('should retrieve shortlisted profiles with partner mapping', async () => {
@@ -273,12 +277,13 @@ describe('ConnectionsService', () => {
       ];
 
       mockPrisma.connection.findMany.mockResolvedValue(mockShortlisted);
+      mockPrisma.connection.count.mockResolvedValue(1);
 
       const result = await service.getConnections('user-me', 'shortlisted');
-      expect(result).toHaveLength(1);
-      expect(result[0].partner.id).toBe('user-short-1');
-      expect(result[0].partner.firstName).toBe('Kavya');
-      expect(result[0].status).toBe('SHORTLISTED');
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].partner.id).toBe('user-short-1');
+      expect(result.data[0].partner.firstName).toBe('Kavya');
+      expect(result.data[0].status).toBe('SHORTLISTED');
     });
 
     it('should retrieve profiles that shortlisted user (shortlisted_you) with sender as partner', async () => {
@@ -300,18 +305,34 @@ describe('ConnectionsService', () => {
       ];
 
       mockPrisma.connection.findMany.mockResolvedValue(mockShortlistedYou);
+      mockPrisma.connection.count.mockResolvedValue(1);
 
       const result = await service.getConnections('user-me', 'shortlisted_you');
-      expect(result).toHaveLength(1);
-      expect(result[0].partner.id).toBe('user-admirer-1');
-      expect(result[0].partner.firstName).toBe('Pooja');
-      expect(result[0].status).toBe('SHORTLISTED');
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].partner.id).toBe('user-admirer-1');
+      expect(result.data[0].partner.firstName).toBe('Pooja');
+      expect(result.data[0].status).toBe('SHORTLISTED');
     });
 
-    it('should return empty array when no mutual matches exist', async () => {
+    it('should return empty data array when no mutual matches exist', async () => {
       mockPrisma.connection.findMany.mockResolvedValue([]);
+      mockPrisma.connection.count.mockResolvedValue(0);
       const result = await service.getConnections('user-me', 'matches');
-      expect(result).toEqual([]);
+      expect(result).toEqual({
+        data: [],
+        meta: { page: 1, limit: 50, total: 0, totalPages: 0 },
+      });
+    });
+
+    it('should respect page and limit parameters', async () => {
+      mockPrisma.connection.findMany.mockResolvedValue([]);
+      mockPrisma.connection.count.mockResolvedValue(120);
+
+      const result = await service.getConnections('user-me', 'sent', { page: 2, limit: 25 });
+      expect(mockPrisma.connection.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ skip: 25, take: 25 }),
+      );
+      expect(result.meta).toEqual({ page: 2, limit: 25, total: 120, totalPages: 5 });
     });
 
     it('should throw BadRequestException on invalid type', async () => {
@@ -381,6 +402,8 @@ describe('ConnectionsService', () => {
           },
         },
       ]);
+      mockPrisma.connection.count.mockResolvedValue(2);
+      mockPrisma.user.count.mockResolvedValue(0);
       mockPrisma.profile.findUnique.mockResolvedValue({ preferences: { favoriteIds: [] } });
 
       const result = await service.getConnections('user-me', 'shortlisted_by_me');
@@ -398,16 +421,16 @@ describe('ConnectionsService', () => {
         }),
       );
 
-      expect(result).toHaveLength(2);
-      expect(result[0].partner.id).toBe('u-old');
-      expect(result[0].partner.isOnline).toBe(false);
-      expect(result[0].partner.online).toBe(false);
-      expect(result[0].partner.lastActiveAt).toBe(threeDaysAgo.toISOString());
+      expect(result.data).toHaveLength(2);
+      expect(result.data[0].partner.id).toBe('u-old');
+      expect(result.data[0].partner.isOnline).toBe(false);
+      expect(result.data[0].partner.online).toBe(false);
+      expect(result.data[0].partner.lastActiveAt).toBe(threeDaysAgo.toISOString());
 
-      expect(result[1].partner.id).toBe('u-live');
-      expect(result[1].partner.isOnline).toBe(true);
-      expect(result[1].partner.online).toBe(true);
-      expect(result[1].partner.lastActiveAt).toBe(oneMinuteAgo.toISOString());
+      expect(result.data[1].partner.id).toBe('u-live');
+      expect(result.data[1].partner.isOnline).toBe(true);
+      expect(result.data[1].partner.online).toBe(true);
+      expect(result.data[1].partner.lastActiveAt).toBe(oneMinuteAgo.toISOString());
     });
   });
 });

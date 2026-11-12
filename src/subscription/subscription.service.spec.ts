@@ -23,6 +23,13 @@ describe('SubscriptionService', () => {
     subscriptionEvent: {
       create: jest.fn(),
     },
+    plan: {
+      findMany: jest.fn<any>(),
+    },
+    contactUnlock: {
+      count: jest.fn<any>(),
+      findMany: jest.fn<any>(),
+    },
   };
 
   beforeEach(async () => {
@@ -41,10 +48,97 @@ describe('SubscriptionService', () => {
     jest.clearAllMocks();
   });
 
-  it('should return subscription plans', () => {
-    const plans = service.getPlans();
+  it('should return subscription plans', async () => {
+    mockPrisma.plan.findMany.mockResolvedValue([
+      {
+        id: 'db-1',
+        code: 'BASIC',
+        name: '1 Month Chat Permit',
+        badge: 'Basic',
+        price: 500,
+        formattedPrice: '₹500',
+        period: 'per month',
+        durationDays: 30,
+        description: 'Basic plan',
+        features: [],
+        contactCredits: 20,
+        dailyInterestsLimit: 20,
+        popular: false,
+      },
+      {
+        id: 'db-2',
+        code: 'STANDARD',
+        name: '3 Months Chat Permit',
+        badge: 'Standard',
+        price: 1250,
+        formattedPrice: '₹1,250',
+        period: 'for 90 days',
+        durationDays: 90,
+        description: 'Standard plan',
+        features: [],
+        contactCredits: 60,
+        dailyInterestsLimit: 40,
+        popular: true,
+      },
+      {
+        id: 'db-3',
+        code: 'PLUS',
+        name: '6 Months Permit',
+        badge: 'Plus',
+        price: 2500,
+        formattedPrice: '₹2,500',
+        period: 'for 180 days',
+        durationDays: 180,
+        description: 'Plus plan',
+        features: [],
+        contactCredits: 120,
+        dailyInterestsLimit: 9999,
+        popular: false,
+      },
+      {
+        id: 'db-4',
+        code: 'ELITE',
+        name: 'One year Chat permit',
+        badge: 'Elite',
+        price: 5000,
+        formattedPrice: '₹5,000',
+        period: 'for one year',
+        durationDays: 365,
+        description: 'Elite plan',
+        features: [],
+        contactCredits: 9999,
+        dailyInterestsLimit: 9999,
+        popular: false,
+      },
+    ]);
+    const plans = await service.getPlans();
     expect(plans).toHaveLength(4);
     expect(plans[0].id).toBe('BASIC');
+  });
+
+  it('should paginate unlocked contacts with defaults and meta', async () => {
+    mockPrisma.contactUnlock.findMany.mockResolvedValue([
+      {
+        id: 'unlock-1',
+        unlockedAt: new Date('2026-02-01T10:00:00Z'),
+        targetUser: {
+          id: 'u-target',
+          firstName: 'Meera',
+          lastName: 'Nair',
+          profileId: 'IMC-123456',
+          phone: '9876543210',
+          isPhoneVerified: true,
+          profile: { city: 'Kochi', state: 'Kerala', occupation: 'Doctor', education: 'MBBS' },
+          photos: [{ url: 'https://img.test/meera.webp' }],
+        },
+      },
+    ]);
+    mockPrisma.contactUnlock.count.mockResolvedValue(1);
+
+    const res = await service.getUnlockedContacts('user-1', { page: 1, limit: 20 });
+    expect(res.data).toHaveLength(1);
+    expect(res.data[0].phone).toBe('9876543210');
+    expect(res.meta).toEqual({ page: 1, limit: 20, total: 1, totalPages: 1 });
   });
 
   describe('hasActiveChatPermit', () => {

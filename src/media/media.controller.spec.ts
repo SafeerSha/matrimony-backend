@@ -1,9 +1,22 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { MediaController } from './media.controller';
-import { MediaService } from './media.service';
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { BadRequestException } from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
 
-jest.mock('file-type', () => ({
+const mockUnlink = jest.fn<any>().mockResolvedValue(undefined);
+const mockMkdir = jest.fn<any>().mockResolvedValue(undefined);
+
+jest.unstable_mockModule('fs/promises', () => ({
+  unlink: mockUnlink,
+  mkdir: mockMkdir,
+}));
+
+jest.unstable_mockModule('file-type', () => ({
+  fromFile: jest.fn((filePath: string) => {
+    if (String(filePath).includes('invalid')) {
+      return Promise.resolve(null);
+    }
+    return Promise.resolve({ mime: 'image/jpeg', ext: 'jpg' });
+  }),
   fromBuffer: jest.fn((buffer: Buffer) => {
     if (buffer.toString().includes('invalid')) {
       return Promise.resolve(null);
@@ -12,15 +25,26 @@ jest.mock('file-type', () => ({
   }),
 }));
 
+jest.unstable_mockModule('@nestjs/config', () => ({
+  ConfigService: class MockConfigService {
+    get() {
+      return undefined;
+    }
+  },
+}));
+
+const { MediaController } = await import('./media.controller');
+const { MediaService } = await import('./media.service');
+
 describe('MediaController', () => {
-  let controller: MediaController;
-  let mediaService: MediaService;
+  let controller: InstanceType<typeof MediaController>;
 
   const mockMediaService = {
-    uploadPhoto: jest.fn(),
-    uploadMultiplePhotos: jest.fn(),
-    setPrimaryPhoto: jest.fn(),
-    deletePhoto: jest.fn(),
+    uploadPhoto: jest.fn<any>(),
+    uploadMultiplePhotos: jest.fn<any>(),
+    setPrimaryPhoto: jest.fn<any>(),
+    replacePhoto: jest.fn<any>(),
+    deletePhoto: jest.fn<any>(),
   };
 
   beforeEach(async () => {
@@ -29,8 +53,7 @@ describe('MediaController', () => {
       providers: [{ provide: MediaService, useValue: mockMediaService }],
     }).compile();
 
-    controller = module.get<MediaController>(MediaController);
-    mediaService = module.get<MediaService>(MediaService);
+    controller = module.get(MediaController);
   });
 
   afterEach(() => {
@@ -44,22 +67,33 @@ describe('MediaController', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('should throw BadRequestException if magic bytes are invalid', async () => {
+    it('should throw BadRequestException and remove temp file if magic bytes are invalid', async () => {
       const invalidFile = {
+        path: '/tmp/invalid-photo.jpg',
         buffer: Buffer.from('invalid file contents'),
       } as Express.Multer.File;
 
       await expect(
         controller.uploadPhoto({ sub: 'user-1' }, invalidFile),
       ).rejects.toThrow('Invalid file type detected by magic bytes!');
+      expect(mockUnlink).toHaveBeenCalledWith('/tmp/invalid-photo.jpg');
     });
 
-    it('should call mediaService.uploadPhoto on valid file', async () => {
+    it('should await uploadPhoto before cleaning up temp file on valid file', async () => {
+      const order: string[] = [];
       const validFile = {
+        path: '/tmp/valid-photo.jpg',
         buffer: Buffer.from('valid jpeg content'),
       } as Express.Multer.File;
 
-      mockMediaService.uploadPhoto.mockResolvedValue({ id: 'photo-1' });
+      mockMediaService.uploadPhoto.mockImplementation(async () => {
+        await new Promise((r) => setTimeout(r, 10));
+        order.push('upload_done');
+        return { id: 'photo-1' };
+      });
+      mockUnlink.mockImplementation(async () => {
+        order.push('unlink_done');
+      });
 
       const result = await controller.uploadPhoto(
         { sub: 'user-1' },
@@ -71,6 +105,7 @@ describe('MediaController', () => {
         'user-1',
         validFile,
       );
+      expect(order).toEqual(['upload_done', 'unlink_done']);
     });
   });
 
@@ -83,8 +118,8 @@ describe('MediaController', () => {
 
     it('should throw BadRequestException if any file fails magic bytes', async () => {
       const files = [
-        { buffer: Buffer.from('valid content') },
-        { buffer: Buffer.from('invalid content') },
+        { path: '/tmp/valid-1.jpg', buffer: Buffer.from('valid content') },
+        { path: '/tmp/invalid-2.jpg', buffer: Buffer.from('invalid content') },
       ] as Express.Multer.File[];
 
       await expect(
@@ -92,12 +127,13 @@ describe('MediaController', () => {
       ).rejects.toThrow(
         'Invalid file type detected by magic bytes in one or more uploaded files!',
       );
+      expect(mockUnlink).toHaveBeenCalledTimes(2);
     });
 
     it('should call mediaService.uploadMultiplePhotos when all valid', async () => {
       const files = [
-        { buffer: Buffer.from('valid 1') },
-        { buffer: Buffer.from('valid 2') },
+        { path: '/tmp/valid-1.jpg', buffer: Buffer.from('valid 1') },
+        { path: '/tmp/valid-2.jpg', buffer: Buffer.from('valid 2') },
       ] as Express.Multer.File[];
 
       mockMediaService.uploadMultiplePhotos.mockResolvedValue([
@@ -115,6 +151,7 @@ describe('MediaController', () => {
         'user-1',
         files,
       );
+      expect(mockUnlink).toHaveBeenCalledTimes(2);
     });
   });
 

@@ -7,6 +7,7 @@ import {
   ForbiddenException,
   NotFoundException,
   Optional,
+  OnModuleDestroy,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
@@ -30,10 +31,13 @@ import { splitFullName } from '../common/utils/name.util';
 import { parseUserAgentAndHeaders, ParsedDeviceInfo } from '../common/utils/device-parser.util';
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleDestroy {
   private readonly logger = new Logger(AuthService.name);
   private readonly activityThrottleMap = new Map<string, number>();
   private readonly ACTIVITY_THROTTLE_MS = 5 * 60 * 1000; // 5 minutes
+  private readonly ACTIVITY_CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+  private readonly MAX_ACTIVITY_THROTTLE_ENTRIES = 10_000;
+  private readonly activityCleanupTimer: ReturnType<typeof setInterval>;
 
   constructor(
     private usersService: UsersService,
@@ -42,28 +46,74 @@ export class AuthService {
     private configService: ConfigService,
     @Optional() private mailService?: MailService,
     @Optional() private smsService?: SmsService,
-  ) {}
+  ) {
+    this.activityCleanupTimer = setInterval(() => {
+      this.cleanupExpiredActivityEntries();
+    }, this.ACTIVITY_CLEANUP_INTERVAL_MS);
+    if (typeof this.activityCleanupTimer.unref === 'function') {
+      this.activityCleanupTimer.unref();
+    }
+  }
+
+  onModuleDestroy(): void {
+    clearInterval(this.activityCleanupTimer);
+    this.activityThrottleMap.clear();
+  }
+
+  /**
+   * Removes expired entries from activityThrottleMap and returns the count removed.
+   */
+  cleanupExpiredActivityEntries(now: number = Date.now()): number {
+    let removed = 0;
+    for (const [userId, timestamp] of this.activityThrottleMap) {
+      if (now - timestamp >= this.ACTIVITY_THROTTLE_MS) {
+        this.activityThrottleMap.delete(userId);
+        removed++;
+      }
+    }
+    return removed;
+  }
+
+  getActivityThrottleMapSize(): number {
+    return this.activityThrottleMap.size;
+  }
 
   /**
    * Throttled non-blocking lastActiveAt recording in the auth/refresh path.
    * Runs at most once per 5 minutes per user, isolated from request failure.
    */
   recordActivityThrottled(userId: string): void {
+    if (!userId) return;
+
     const now = Date.now();
     const last = this.activityThrottleMap.get(userId);
-    if (last && now - last < this.ACTIVITY_THROTTLE_MS) {
-      return;
+    if (last !== undefined) {
+      if (now - last < this.ACTIVITY_THROTTLE_MS) {
+        return;
+      }
+      // Delete before re-inserting so Map iteration order remains oldest-first
+      this.activityThrottleMap.delete(userId);
     }
+
+    if (this.activityThrottleMap.size >= this.MAX_ACTIVITY_THROTTLE_ENTRIES) {
+      this.cleanupExpiredActivityEntries(now);
+      while (this.activityThrottleMap.size >= this.MAX_ACTIVITY_THROTTLE_ENTRIES) {
+        const oldestKey = this.activityThrottleMap.keys().next().value;
+        if (oldestKey === undefined) break;
+        this.activityThrottleMap.delete(oldestKey);
+      }
+    }
+
     this.activityThrottleMap.set(userId, now);
 
-    this.prisma.user
-      .update({
+    Promise.resolve(
+      this.prisma.user.update({
         where: { id: userId },
         data: { lastActiveAt: new Date(now) },
-      })
-      .catch((err) => {
-        this.logger.warn(`Failed to update lastActiveAt for ${userId}: ${err?.message}`);
-      });
+      }),
+    ).catch((err) => {
+      this.logger.warn(`Failed to update lastActiveAt for ${userId}: ${err?.message}`);
+    });
   }
 
   async getTokens(userId: string, email: string | null | undefined, role: string, sessionId?: string, status?: string) {

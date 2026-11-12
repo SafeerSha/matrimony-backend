@@ -1,23 +1,33 @@
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
-import { MediaService } from './media.service';
-import { PrismaService } from '../prisma/prisma.service';
-import { STORAGE_SERVICE, StorageService } from '../storage/storage.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 
+jest.unstable_mockModule('@nestjs/config', () => ({
+  ConfigService: class MockConfigService {
+    get() {
+      return undefined;
+    }
+  },
+}));
+
+const { PrismaService } = await import('../prisma/prisma.service');
+const { STORAGE_SERVICE } = await import('../storage/storage.service');
+const { MediaService } = await import('./media.service');
+
 describe('MediaService', () => {
-  let service: MediaService;
-  let prisma: PrismaService;
-  let storageService: StorageService;
+  let service: InstanceType<typeof MediaService>;
+  let prisma: any;
+  let storageService: any;
 
   const mockPrisma: any = {
     photo: {
-      count: jest.fn(),
-      create: jest.fn(),
-      findUnique: jest.fn(),
-      findFirst: jest.fn(),
-      update: jest.fn(),
-      updateMany: jest.fn(),
-      delete: jest.fn(),
+      count: jest.fn<any>(),
+      create: jest.fn<any>(),
+      findUnique: jest.fn<any>(),
+      findFirst: jest.fn<any>(),
+      update: jest.fn<any>(),
+      updateMany: jest.fn<any>(),
+      delete: jest.fn<any>(),
     },
     $transaction: jest.fn((callback: any): any => {
       if (typeof callback === 'function') {
@@ -28,8 +38,8 @@ describe('MediaService', () => {
   };
 
   const mockStorageService = {
-    uploadFile: jest.fn(),
-    deleteFile: jest.fn(),
+    uploadFile: jest.fn<any>(),
+    deleteFile: jest.fn<any>(),
   };
 
   beforeEach(async () => {
@@ -41,9 +51,9 @@ describe('MediaService', () => {
       ],
     }).compile();
 
-    service = module.get<MediaService>(MediaService);
-    prisma = module.get<PrismaService>(PrismaService);
-    storageService = module.get<StorageService>(STORAGE_SERVICE);
+    service = module.get(MediaService);
+    prisma = module.get(PrismaService);
+    storageService = module.get(STORAGE_SERVICE);
   });
 
   afterEach(() => {

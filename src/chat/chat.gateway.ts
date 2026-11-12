@@ -9,7 +9,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
-import { Logger } from '@nestjs/common';
+import { Logger, OnModuleDestroy } from '@nestjs/common';
 import { ChatService } from './chat.service';
 import { SubscriptionService } from '../subscription/subscription.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -20,12 +20,12 @@ import { PrismaService } from '../prisma/prisma.service';
     credentials: true,
   },
 })
-export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleDestroy {
   @WebSocketServer()
   server!: Server;
 
   private readonly logger = new Logger(ChatGateway.name);
-  private userSockets: Map<string, string> = new Map();
+  private userSockets: Map<string, Set<string>> = new Map();
 
   constructor(
     private readonly jwtService: JwtService,
@@ -34,12 +34,82 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly subscriptionService: SubscriptionService,
   ) {}
 
+  onModuleDestroy(): void {
+    // Close all Socket.io connections gracefully
+    if (this.server) {
+      this.server.disconnectSockets?.(true);
+    }
+    this.userSockets.clear();
+  }
+
+  private pruneDeadSockets(sockets: Set<string>, keepSocketId?: string): void {
+    const liveSockets = (this.server as any)?.sockets?.sockets;
+    if (!(liveSockets instanceof Map)) {
+      return;
+    }
+    for (const id of sockets) {
+      if (id !== keepSocketId && !liveSockets.has(id)) {
+        sockets.delete(id);
+      }
+    }
+  }
+
+  private addSocket(userId: string, socketId: string): void {
+    if (!userId || !socketId) return;
+    let sockets = this.userSockets.get(userId);
+    if (sockets) {
+      this.pruneDeadSockets(sockets, socketId);
+    } else {
+      sockets = new Set<string>();
+      this.userSockets.set(userId, sockets);
+    }
+    sockets.add(socketId);
+  }
+
+  private removeSocket(
+    userId: string,
+    socketId: string,
+  ): { removed: boolean; wentOffline: boolean } {
+    const sockets = this.userSockets.get(userId);
+    if (!sockets || !sockets.has(socketId)) {
+      return { removed: false, wentOffline: false };
+    }
+    sockets.delete(socketId);
+    this.pruneDeadSockets(sockets);
+    if (sockets.size === 0) {
+      this.userSockets.delete(userId);
+      return { removed: true, wentOffline: true };
+    }
+    return { removed: true, wentOffline: false };
+  }
+
+  private getActiveSockets(userId: string): Set<string> | null {
+    const sockets = this.userSockets.get(userId);
+    if (!sockets || sockets.size === 0) {
+      return null;
+    }
+    this.pruneDeadSockets(sockets);
+    if (sockets.size === 0) {
+      this.userSockets.delete(userId);
+      return null;
+    }
+    return sockets;
+  }
+
   isUserOnline(userId: string): boolean {
-    return this.userSockets.has(userId);
+    return this.getActiveSockets(userId) !== null;
+  }
+
+  getUserSocketCount(userId: string): number {
+    return this.getActiveSockets(userId)?.size ?? 0;
   }
 
   async handleConnection(client: Socket) {
     try {
+      if (!client?.id || (client as any).disconnected) {
+        return;
+      }
+
       const token = this.extractToken(client);
       if (!token) {
         this.logger.warn(`Unauthorized socket connection attempt (no token): ${client.id}`);
@@ -55,8 +125,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return;
       }
 
-      this.userSockets.set(userId, client.id);
+      client.data = client.data || {};
       client.data.user = payload;
+      this.addSocket(userId, client.id);
       this.logger.log(`User ${userId} authenticated on socket ${client.id}`);
 
       // Update lastActiveAt in database and broadcast live presence
@@ -69,58 +140,80 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.logger.warn(`Failed updating lastActiveAt for ${userId}: ${e?.message}`);
       }
 
-      this.server.emit('user_presence', {
+      // Guard against client disconnecting while DB update was in-flight
+      if ((client as any).disconnected || !this.userSockets.get(userId)?.has(client.id)) {
+        this.removeSocket(userId, client.id);
+        return;
+      }
+
+      this.server?.emit?.('user_presence', {
         userId,
         isOnline: true,
         lastActiveAt: new Date().toISOString(),
       });
     } catch (error: any) {
+      const userId = client?.data?.user?.sub;
+      if (userId && client?.id) {
+        this.removeSocket(userId, client.id);
+      }
       this.logger.warn(
-        `Socket authentication failed for client ${client.id}: ${error?.message}`,
+        `Socket authentication failed for client ${client?.id}: ${error?.message}`,
       );
-      client.disconnect();
+      client?.disconnect?.();
     }
   }
 
   async handleDisconnect(client: Socket) {
-    const userId = client.data?.user?.sub;
-    if (userId && this.userSockets.get(userId) === client.id) {
-      this.userSockets.delete(userId);
-      this.logger.log(`User ${userId} disconnected from socket ${client.id}`);
-
-      const now = new Date();
-      try {
-        await this.prisma.user.update({
-          where: { id: userId },
-          data: { lastActiveAt: now } as any,
-        });
-      } catch (e: any) {
-        this.logger.warn(`Failed updating lastActiveAt on disconnect for ${userId}: ${e?.message}`);
-      }
-
-      this.server.emit('user_presence', {
-        userId,
-        isOnline: false,
-        lastActiveAt: now.toISOString(),
-      });
+    const userId = client?.data?.user?.sub;
+    if (!userId || !client?.id) {
+      return;
     }
+
+    const { removed, wentOffline } = this.removeSocket(userId, client.id);
+    if (!removed) {
+      return;
+    }
+
+    this.logger.log(`User ${userId} disconnected from socket ${client.id}`);
+
+    if (!wentOffline) {
+      return;
+    }
+
+    const now = new Date();
+    try {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { lastActiveAt: now } as any,
+      });
+    } catch (e: any) {
+      this.logger.warn(`Failed updating lastActiveAt on disconnect for ${userId}: ${e?.message}`);
+    }
+
+    this.server?.emit?.('user_presence', {
+      userId,
+      isOnline: false,
+      lastActiveAt: now.toISOString(),
+    });
   }
 
   emitToUser(userId: string, event: string, data: any): boolean {
-    const socketId = this.userSockets.get(userId);
-    if (socketId && this.server) {
-      this.server.to(socketId).emit(event, data);
-      return true;
+    const sockets = this.getActiveSockets(userId);
+    if (!sockets || !this.server) {
+      return false;
     }
-    return false;
+    for (const socketId of sockets) {
+      this.server.to(socketId).emit(event, data);
+    }
+    return true;
   }
 
   @SubscribeMessage('heartbeat')
   async handleHeartbeat(@ConnectedSocket() client: Socket) {
-    const userId = client.data?.user?.sub;
-    if (userId) {
+    const userId = client?.data?.user?.sub;
+    if (userId && client?.id) {
       const now = new Date();
-      this.userSockets.set(userId, client.id);
+      this.addSocket(userId, client.id);
       try {
         await this.prisma.user.update({
           where: { id: userId },
@@ -137,13 +230,15 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (payload?.userId) {
       return {
         event: 'user_presence',
-        data: { userId: payload.userId, isOnline: this.userSockets.has(payload.userId) },
+        data: { userId: payload.userId, isOnline: this.isUserOnline(payload.userId) },
       };
     }
     if (Array.isArray(payload?.userIds)) {
       const statuses: Record<string, boolean> = {};
-      for (const id of payload.userIds) {
-        statuses[id] = this.userSockets.has(id);
+      for (const id of payload.userIds.slice(0, 500)) {
+        if (typeof id === 'string' && id) {
+          statuses[id] = this.isUserOnline(id);
+        }
       }
       return { event: 'batch_presence', data: statuses };
     }
@@ -185,10 +280,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         payload.content.trim(),
       );
 
-      const receiverSocketId = this.userSockets.get(payload.receiverId);
-      if (receiverSocketId) {
-        this.server.to(receiverSocketId).emit('receive_message', message);
-      }
+      const targetReceiverId = message?.receiverId || payload.receiverId;
+      this.emitToUser(targetReceiverId, 'receive_message', message);
 
       return { event: 'message_sent', data: message };
     } catch (error: any) {
@@ -215,14 +308,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     try {
       await this.chatService.markAsRead(userId, payload.contactId);
 
-      // Notify the sender that their messages have been read
-      const senderSocketId = this.userSockets.get(payload.contactId);
-      if (senderSocketId) {
-        this.server.to(senderSocketId).emit('messages_read', {
-          readerId: userId,
-          contactId: payload.contactId,
-        });
-      }
+      // Notify the sender across all connected sockets that their messages have been read
+      this.emitToUser(payload.contactId, 'messages_read', {
+        readerId: userId,
+        contactId: payload.contactId,
+      });
 
       return { event: 'mark_read_ack', data: { success: true } };
     } catch (error: any) {
@@ -238,13 +328,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const senderId = client.data?.user?.sub;
     if (!senderId || !payload?.receiverId) return;
 
-    const receiverSocketId = this.userSockets.get(payload.receiverId);
-    if (receiverSocketId) {
-      this.server.to(receiverSocketId).emit('user_typing', {
-        senderId,
-        isTyping: Boolean(payload.isTyping),
-      });
-    }
+    this.emitToUser(payload.receiverId, 'user_typing', {
+      senderId,
+      isTyping: Boolean(payload.isTyping),
+    });
   }
 
   private extractToken(client: Socket): string | null {

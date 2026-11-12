@@ -7,7 +7,9 @@ import {
 } from '@aws-sdk/client-s3';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import * as fsp from 'fs/promises';
 import * as path from 'path';
+import { Readable } from 'stream';
 import { ImageProcessorService } from './image-processor.service';
 
 import {
@@ -24,6 +26,10 @@ export {
   StorageDeleteTarget,
 };
 
+type FileSource =
+  | { kind: 'buffer'; buffer: Buffer }
+  | { kind: 'stream'; stream: Readable; tempPath?: string };
+
 @Injectable()
 export class LocalStorageService implements StorageService {
   private readonly logger = new Logger(LocalStorageService.name);
@@ -34,37 +40,74 @@ export class LocalStorageService implements StorageService {
     private readonly imageProcessor: ImageProcessorService,
   ) {
     this.uploadDir = path.join(process.cwd(), 'uploads');
-    if (!fs.existsSync(this.uploadDir)) {
-      try {
-        fs.mkdirSync(this.uploadDir, { recursive: true });
-      } catch (err) {
-        this.logger.error('Failed to create uploads directory', err);
-      }
+    this.initDirectory();
+  }
+
+  private async initDirectory(): Promise<void> {
+    try {
+      await fsp.mkdir(this.uploadDir, { recursive: true });
+    } catch (err) {
+      this.logger.error('Failed to create uploads directory', err);
     }
+  }
+
+  private async fileExists(filePath: string): Promise<boolean> {
+    try {
+      await fsp.access(filePath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private getFileSource(file: Express.Multer.File): FileSource {
+    if ((file as any).path) {
+      return {
+        kind: 'stream',
+        stream: fs.createReadStream((file as any).path as string),
+        tempPath: (file as any).path as string,
+      };
+    }
+    return { kind: 'buffer', buffer: file.buffer };
   }
 
   async uploadFile(
     file: Express.Multer.File,
     userId: string,
   ): Promise<StorageUploadResult> {
-    if (!file.buffer || file.buffer.length === 0) {
+    const source = this.getFileSource(file);
+
+    if (source.kind === 'buffer' && !source.buffer) {
       throw new Error('File buffer is empty or missing');
     }
 
-    // Convert to WebP regardless of original format
-    const converted = await this.imageProcessor.convertToWebP(
-      file.buffer,
+    // Convert to WebP via Sharp. Sharp reads from the stream directly
+    // (or buffer), avoiding a second copy of the input in heap memory.
+    const converted = await this.imageProcessor.convertToWebPFromSource(
+      source,
       file.mimetype,
     );
 
     const filename = `${crypto.randomUUID()}.webp`;
     const filePath = path.join(this.uploadDir, filename);
 
-    if (!fs.existsSync(this.uploadDir)) {
-      fs.mkdirSync(this.uploadDir, { recursive: true });
-    }
+    await this.initDirectory();
 
-    fs.writeFileSync(filePath, converted.buffer);
+    // Stream the converted output directly to disk, avoiding holding
+    // the output buffer in heap memory.
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const outStream = fs.createWriteStream(filePath);
+        converted.stream.pipe(outStream);
+        outStream.on('finish', () => resolve());
+        outStream.on('error', reject);
+      });
+    } finally {
+      // Clean up the temp source file if it was disk-based
+      if (source.kind === 'stream' && source.tempPath) {
+        await fsp.unlink(source.tempPath).catch(() => {});
+      }
+    }
 
     return {
       url: `/uploads/${filename}`,
@@ -79,9 +122,9 @@ export class LocalStorageService implements StorageService {
       target.url.replace('/uploads/', '').replace(/^\/+/, '');
     const filePath = path.join(this.uploadDir, filename);
 
-    if (fs.existsSync(filePath)) {
+    if (await this.fileExists(filePath)) {
       try {
-        fs.unlinkSync(filePath);
+        await fsp.unlink(filePath);
       } catch (err) {
         this.logger.warn(`Failed to delete local file: ${filePath}`);
       }
@@ -161,19 +204,33 @@ export class R2StorageService implements StorageService {
     this.isConfigured = true;
   }
 
+  private getFileSource(file: Express.Multer.File): FileSource {
+    if ((file as any).path) {
+      return {
+        kind: 'stream',
+        stream: fs.createReadStream((file as any).path as string),
+        tempPath: (file as any).path as string,
+      };
+    }
+    return { kind: 'buffer', buffer: file.buffer };
+  }
+
   async uploadFile(
     file: Express.Multer.File,
     userId: string,
   ): Promise<StorageUploadResult> {
     this.ensureConfigured();
 
-    if (!file.buffer || file.buffer.length === 0) {
+    const source = this.getFileSource(file);
+
+    if (source.kind === 'buffer' && !source.buffer) {
       throw new Error('File buffer is empty or missing');
     }
 
-    // Convert to WebP regardless of original format
-    const converted = await this.imageProcessor.convertToWebP(
-      file.buffer,
+    // Convert to WebP via Sharp. Sharp reads from the stream directly
+    // (or buffer), avoiding a second copy of the input in heap memory.
+    const converted = await this.imageProcessor.convertToWebPFromSource(
+      source,
       file.mimetype,
     );
 
@@ -187,10 +244,12 @@ export class R2StorageService implements StorageService {
 
     const objectKey = `${prefix}users/${userId}/${crypto.randomUUID()}.webp`;
 
+    // Stream the converted output directly to R2 without buffering the
+    // entire output in heap memory.
     const command = new PutObjectCommand({
       Bucket: this.bucket,
       Key: objectKey,
-      Body: converted.buffer,
+      Body: converted.stream as any,
       ContentType: 'image/webp',
     });
 
@@ -199,6 +258,11 @@ export class R2StorageService implements StorageService {
 
       const baseUrl = this.publicBaseUrl.replace(/\/+$/, '');
       const url = `${baseUrl}/${objectKey}`;
+
+      // Clean up temp source file if disk-based
+      if (source.kind === 'stream' && source.tempPath) {
+        await fsp.unlink(source.tempPath).catch(() => {});
+      }
 
       return {
         url,
@@ -211,6 +275,10 @@ export class R2StorageService implements StorageService {
       );
       if (this.localStorageService) {
         return this.localStorageService.uploadFile(file, userId);
+      }
+      // Clean up temp source file only when no fallback storage consumed it
+      if (source.kind === 'stream' && source.tempPath) {
+        await fsp.unlink(source.tempPath).catch(() => {});
       }
       throw r2Err;
     }
@@ -226,9 +294,9 @@ export class R2StorageService implements StorageService {
         target.objectKey ||
         target.url.replace('/uploads/', '').replace(/^\/+/, '');
       const filePath = path.join(process.cwd(), 'uploads', filename);
-      if (fs.existsSync(filePath)) {
+      if (await this.fileExists(filePath)) {
         try {
-          fs.unlinkSync(filePath);
+          await fsp.unlink(filePath);
         } catch {
           // ignore error
         }
@@ -244,6 +312,15 @@ export class R2StorageService implements StorageService {
       });
 
       await this.s3Client!.send(command);
+    }
+  }
+
+  private async fileExists(filePath: string): Promise<boolean> {
+    try {
+      await fsp.access(filePath);
+      return true;
+    } catch {
+      return false;
     }
   }
 }

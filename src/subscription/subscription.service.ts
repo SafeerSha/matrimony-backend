@@ -9,6 +9,11 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  ContactUnlockQueryDto,
+  DEFAULT_CONTACT_UNLOCK_LIMIT,
+  MAX_CONTACT_UNLOCK_LIMIT,
+} from './dto/contact-unlock-query.dto';
 
 export interface PlanConfig {
   id: string;
@@ -1138,56 +1143,78 @@ export class SubscriptionService {
   }
 
   /**
-   * List all verified contacts unlocked by the user.
+   * List all verified contacts unlocked by the user (paginated).
    */
-  async getUnlockedContacts(viewerId: string) {
+  async getUnlockedContacts(
+    viewerId: string,
+    query: ContactUnlockQueryDto = {},
+  ) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? DEFAULT_CONTACT_UNLOCK_LIMIT;
+    const skip = (page - 1) * limit;
+
     try {
       if ((this.prisma as any).contactUnlock?.findMany) {
         try {
-          const unlocks = await this.prisma.contactUnlock.findMany({
-            where: { userId: viewerId },
-            orderBy: { unlockedAt: 'desc' },
-            include: {
-              targetUser: {
-                select: {
-                  id: true,
-                  firstName: true,
-                  lastName: true,
-                  profileId: true,
-                  phone: true,
-                  isPhoneVerified: true,
-                  profile: {
-                    select: {
-                      city: true,
-                      state: true,
-                      occupation: true,
-                      education: true,
+          const [unlocks, total] = await Promise.all([
+            this.prisma.contactUnlock.findMany({
+              where: { userId: viewerId },
+              orderBy: { unlockedAt: 'desc' },
+              skip,
+              take: limit,
+              include: {
+                targetUser: {
+                  select: {
+                    id: true,
+                    firstName: true,
+                    lastName: true,
+                    profileId: true,
+                    phone: true,
+                    isPhoneVerified: true,
+                    profile: {
+                      select: {
+                        city: true,
+                        state: true,
+                        occupation: true,
+                        education: true,
+                      },
                     },
-                  },
-                  photos: {
-                    where: { isPrimary: true },
-                    take: 1,
-                    select: { url: true },
+                    photos: {
+                      where: { isPrimary: true },
+                      take: 1,
+                      select: { url: true },
+                    },
                   },
                 },
               },
-            },
-          });
+            }),
+            this.prisma.contactUnlock.count({
+              where: { userId: viewerId },
+            }),
+          ]);
 
-          return unlocks.map((u) => ({
-            unlockId: u.id,
-            unlockedAt: u.unlockedAt,
-            userId: u.targetUser.id,
-            profileId: u.targetUser.profileId,
-            name: `${u.targetUser.firstName || ''} ${u.targetUser.lastName || ''}`.trim() || 'Member',
-            phone: u.targetUser.phone,
-            isPhoneVerified: u.targetUser.isPhoneVerified,
-            city: u.targetUser.profile?.city,
-            state: u.targetUser.profile?.state,
-            occupation: u.targetUser.profile?.occupation,
-            education: u.targetUser.profile?.education,
-            avatarUrl: u.targetUser.photos?.[0]?.url || '',
-          }));
+          return {
+            data: unlocks.map((u) => ({
+              unlockId: u.id,
+              unlockedAt: u.unlockedAt,
+              userId: u.targetUser.id,
+              profileId: u.targetUser.profileId,
+              name: `${u.targetUser.firstName || ''} ${u.targetUser.lastName || ''}`.trim() || 'Member',
+              phone: u.targetUser.phone,
+              isPhoneVerified: u.targetUser.isPhoneVerified,
+              city: u.targetUser.profile?.city,
+              state: u.targetUser.profile?.state,
+              occupation: u.targetUser.profile?.occupation,
+              education: u.targetUser.profile?.education,
+              avatarUrl: u.targetUser.photos?.[0]?.url || '',
+            })),
+            meta: {
+              page,
+              limit,
+              total,
+              totalPages: Math.ceil(total / limit),
+            },
+          };
         } catch (err: any) {
           this.logger.warn(`[getUnlockedContacts] Delegate query failed, falling back to raw SQL: ${err?.message}`);
         }
@@ -1213,27 +1240,51 @@ export class SubscriptionService {
         LEFT JOIN "Profile" p ON p."userId" = u.id
         LEFT JOIN "Photo" ph ON ph."userId" = u.id AND ph."isPrimary" = true
         WHERE cu."userId" = ${viewerId}
-        ORDER BY cu."unlockedAt" DESC;
+        ORDER BY cu."unlockedAt" DESC
+        LIMIT ${limit}
+        OFFSET ${skip};
       `;
 
-      return (rows || []).map((r) => ({
-        unlockId: r.unlockId,
-        unlockedAt: r.unlockedAt,
-        userId: r.userId,
-        profileId: r.profileId,
-        name: `${r.firstName || ''} ${r.lastName || ''}`.trim() || 'Member',
-        phone: r.phone,
-        isPhoneVerified: Boolean(r.isPhoneVerified),
-        city: r.city,
-        state: r.state,
-        occupation: r.occupation,
-        education: r.education,
-        avatarUrl: r.avatarUrl || '',
-      }));
+      const countResult = await this.prisma.$queryRaw<any[]>`
+        SELECT COUNT(*) as count FROM "ContactUnlock" WHERE "userId" = ${viewerId};
+      `;
+
+      const total = countResult?.[0]?.count ? Number(countResult[0].count) : 0;
+
+      return {
+        data: (rows || []).map((r) => ({
+          unlockId: r.unlockId,
+          unlockedAt: r.unlockedAt,
+          userId: r.userId,
+          profileId: r.profileId,
+          name: `${r.firstName || ''} ${r.lastName || ''}`.trim() || 'Member',
+          phone: r.phone,
+          isPhoneVerified: Boolean(r.isPhoneVerified),
+          city: r.city,
+          state: r.state,
+          occupation: r.occupation,
+          education: r.education,
+          avatarUrl: r.avatarUrl || '',
+        })),
+        meta: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit),
+        },
+      };
     } catch (err: any) {
       if (err?.code === '42P01' || err?.message?.includes('does not exist')) {
         await this.ensureContactUnlockTable();
-        return [];
+        return {
+          data: [],
+          meta: {
+            page,
+            limit,
+            total: 0,
+            totalPages: 0,
+          },
+        };
       }
       this.logger.error(`[getUnlockedContacts] Error: ${err?.message}`, err?.stack);
       if (err instanceof HttpException) throw err;

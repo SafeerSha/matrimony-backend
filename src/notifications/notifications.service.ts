@@ -1,5 +1,23 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationQueryDto, DEFAULT_NOTIFICATION_LIMIT, MAX_NOTIFICATION_LIMIT } from './dto/notification-query.dto';
+
+export interface NotificationQueryOptions {
+  cursor?: string;
+  limit?: number;
+  direction?: 'before' | 'after';
+}
+
+export interface PaginatedNotifications {
+  data: any[];
+  meta: {
+    limit: number;
+    count: number;
+    hasMore: boolean;
+    nextCursor: string | null;
+    prevCursor: string | null;
+  };
+}
 
 @Injectable()
 export class NotificationsService {
@@ -141,22 +159,106 @@ export class NotificationsService {
     });
   }
 
-  async getUserNotifications(userId: string) {
-    const all = await this.prisma.notification.findMany({
-      where: {
-        userId,
-        NOT: {
-          referenceId: userId,
-        },
+  async getUserNotifications(
+    userId: string,
+    options: NotificationQueryOptions = {},
+  ): Promise<PaginatedNotifications> {
+    const rawLimit = options?.limit;
+    let limit = DEFAULT_NOTIFICATION_LIMIT;
+    if (rawLimit !== undefined && rawLimit !== null) {
+      const parsed = Number(rawLimit);
+      if (!Number.isInteger(parsed) || parsed < 1) {
+        throw new BadRequestException('limit must be a positive integer.');
+      }
+      limit = Math.min(MAX_NOTIFICATION_LIMIT, parsed);
+    }
+
+    const direction: 'before' | 'after' =
+      options?.direction === 'after' ? 'after' : 'before';
+    const cursor =
+      typeof options?.cursor === 'string' && options.cursor.trim()
+        ? options.cursor.trim()
+        : undefined;
+
+    const where: any = {
+      userId,
+      NOT: {
+        referenceId: userId,
       },
-      orderBy: { createdAt: 'desc' },
+    };
+
+    if (cursor) {
+      const cursorNotification = await this.prisma.notification.findFirst({
+        where: {
+          id: cursor,
+          userId,
+        },
+        select: {
+          id: true,
+          createdAt: true,
+        },
+      });
+
+      if (!cursorNotification) {
+        throw new BadRequestException('Invalid pagination cursor.');
+      }
+
+      const cursorDate =
+        cursorNotification.createdAt instanceof Date
+          ? cursorNotification.createdAt
+          : new Date(cursorNotification.createdAt);
+      const op = direction === 'after' ? 'gt' : 'lt';
+
+      where.AND = [
+        {
+          userId,
+          NOT: {
+            referenceId: userId,
+          },
+        },
+        {
+          OR: [
+            { createdAt: { [op]: cursorDate } },
+            {
+              createdAt: cursorDate,
+              id: { [op]: cursorNotification.id },
+            },
+          ],
+        },
+      ];
+      // Remove the top-level userId/NOT since they're now inside AND
+      delete where.userId;
+      delete where.NOT;
+    }
+
+    const rows = await this.prisma.notification.findMany({
+      where,
+      select: {
+        id: true,
+        userId: true,
+        type: true,
+        content: true,
+        referenceId: true,
+        isRead: true,
+        createdAt: true,
+      },
+      orderBy:
+        direction === 'after'
+          ? [{ createdAt: 'asc' }, { id: 'asc' }]
+          : [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
     });
+
+    const hasMore = rows.length > limit;
+    const pageRows = hasMore ? rows.slice(0, limit) : rows;
+    // Keep notifications newest-first for UI feeds regardless of pagination direction
+    const data = direction === 'after' ? [...pageRows].reverse() : pageRows;
 
     // Deduplicate NEW_MESSAGE notifications by sender so each user appears only once (latest notification only)
     const seenSenders = new Set<string>();
     const distinctList = [];
 
-    for (const notif of all) {
+    for (const notif of data) {
       if (notif.type === 'NEW_MESSAGE' && notif.referenceId) {
         if (seenSenders.has(notif.referenceId)) {
           continue;
@@ -166,42 +268,49 @@ export class NotificationsService {
       distinctList.push(notif);
     }
 
-    // Enrich with sender profile details (name, photo, city)
+    // Enrich with sender profile details (name, photo, city) - only for current page
     const userIdsToFetch = Array.from(
-      new Set(distinctList.map((n) => n.referenceId).filter((id): id is string => Boolean(id)))
+      new Set(
+        distinctList
+          .map((n) => n.referenceId)
+          .filter((id): id is string => Boolean(id)),
+      ),
     );
 
-    const senders = userIdsToFetch.length > 0
-      ? await this.prisma.user.findMany({
-          where: { id: { in: userIdsToFetch } },
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            profile: {
-              select: {
-                city: true,
-                occupation: true,
-                firstName: true,
-                lastName: true,
+    const senders =
+      userIdsToFetch.length > 0
+        ? await this.prisma.user.findMany({
+            where: { id: { in: userIdsToFetch } },
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              profile: {
+                select: {
+                  city: true,
+                  occupation: true,
+                  firstName: true,
+                  lastName: true,
+                },
+              },
+              photos: {
+                select: {
+                  url: true,
+                  isPrimary: true,
+                },
               },
             },
-            photos: {
-              select: {
-                url: true,
-                isPrimary: true,
-              },
-            },
-          },
-        })
-      : [];
+          })
+        : [];
 
     const senderMap = new Map(
       senders.map((s) => {
-        const photo = s.photos.find((p) => p.isPrimary)?.url || s.photos[0]?.url || null;
+        const photo =
+          s.photos.find((p) => p.isPrimary)?.url || s.photos[0]?.url || null;
         const name =
-          `${s.profile?.firstName || s.firstName || ''} ${s.profile?.lastName || s.lastName || ''}`.trim() ||
-          'Member';
+          `${s.profile?.firstName || s.firstName || ''} ${
+            s.profile?.lastName || s.lastName || ''
+          }`.trim() || 'Member';
         return [
           s.id,
           {
@@ -215,7 +324,20 @@ export class NotificationsService {
       })
     );
 
-    return distinctList.map((notif) => {
+    let nextCursor: string | null = null;
+    let prevCursor: string | null = null;
+
+    if (distinctList.length > 0) {
+      if (direction === 'after') {
+        nextCursor = hasMore ? distinctList[0].id : null;
+        prevCursor = cursor ? distinctList[distinctList.length - 1].id : null;
+      } else {
+        nextCursor = hasMore ? distinctList[distinctList.length - 1].id : null;
+        prevCursor = cursor ? distinctList[0].id : null;
+      }
+    }
+
+    const result = distinctList.map((notif) => {
       const sender = notif.referenceId ? senderMap.get(notif.referenceId) || null : null;
       let content = notif.content;
       // If legacy content was "You have a new message!", replace with sender name
@@ -228,6 +350,17 @@ export class NotificationsService {
         sender,
       };
     });
+
+    return {
+      data: result,
+      meta: {
+        limit,
+        count: result.length,
+        hasMore,
+        nextCursor,
+        prevCursor,
+      },
+    };
   }
 
   async markAsRead(notificationId: string, userId: string) {

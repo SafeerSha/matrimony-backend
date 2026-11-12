@@ -1,8 +1,5 @@
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
-import { AuthService } from './auth.service';
-import { UsersService } from '../users/users.service';
-import { JwtService } from '@nestjs/jwt';
-import { ConfigService } from '@nestjs/config';
 import {
   BadRequestException,
   ConflictException,
@@ -10,64 +7,93 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import * as argon2 from 'argon2';
-import { PrismaService } from '../prisma/prisma.service';
 
-jest.mock('argon2');
+const mockArgon2Hash = jest.fn<any>();
+const mockArgon2Verify = jest.fn<any>();
+
+jest.unstable_mockModule('argon2', () => ({
+  hash: mockArgon2Hash,
+  verify: mockArgon2Verify,
+  default: {
+    hash: mockArgon2Hash,
+    verify: mockArgon2Verify,
+  },
+}));
+
+jest.unstable_mockModule('@nestjs/jwt', () => ({
+  JwtService: class MockJwtService {
+    sign = jest.fn();
+    signAsync = jest.fn();
+  },
+}));
+
+jest.unstable_mockModule('@nestjs/config', () => ({
+  ConfigService: class MockConfigService {
+    get = jest.fn();
+  },
+}));
+
+const argon2 = await import('argon2');
+const { JwtService } = await import('@nestjs/jwt');
+const { ConfigService } = await import('@nestjs/config');
+const { AuthService } = await import('./auth.service');
+const { UsersService } = await import('../users/users.service');
+const { PrismaService } = await import('../prisma/prisma.service');
 
 describe('AuthService', () => {
-  let service: AuthService;
-  let usersService: UsersService;
-  let jwt: JwtService;
+  let service: InstanceType<typeof AuthService>;
+  let usersService: InstanceType<typeof UsersService>;
+  let jwt: InstanceType<typeof JwtService>;
 
   const mockUsersService = {
-    findByEmail: jest.fn(),
-    findByPhone: jest.fn(),
-    create: jest.fn(),
-    updateRefreshToken: jest.fn(),
-    findById: jest.fn(),
-    clearRefreshToken: jest.fn(),
-    generateUniqueProfileId: jest.fn(),
+    findByEmail: jest.fn<any>(),
+    findByPhone: jest.fn<any>(),
+    create: jest.fn<any>(),
+    updateRefreshToken: jest.fn<any>(),
+    findById: jest.fn<any>(),
+    clearRefreshToken: jest.fn<any>(),
+    generateUniqueProfileId: jest.fn<any>(),
   };
 
   const mockJwt = {
-    sign: jest.fn(),
-    signAsync: jest.fn().mockResolvedValue('token'),
+    sign: jest.fn<any>(),
+    signAsync: jest.fn<any>().mockResolvedValue('token'),
   };
 
   const mockPrismaService = {
     user: {
-      findFirst: jest.fn(),
-      findUnique: jest.fn(),
-      create: jest.fn(),
-      update: jest.fn(),
+      findFirst: jest.fn<any>(),
+      findUnique: jest.fn<any>(),
+      create: jest.fn<any>(),
+      update: jest.fn<any>().mockResolvedValue({}),
     },
     profile: {
-      create: jest.fn(),
-      update: jest.fn(),
-      upsert: jest.fn(),
+      create: jest.fn<any>(),
+      update: jest.fn<any>(),
+      upsert: jest.fn<any>(),
     },
     otpVerification: {
-      findFirst: jest.fn(),
-      updateMany: jest.fn(),
-      create: jest.fn(),
-      update: jest.fn(),
+      findFirst: jest.fn<any>(),
+      updateMany: jest.fn<any>(),
+      create: jest.fn<any>(),
+      update: jest.fn<any>(),
     },
     userDevice: {
-      findMany: jest.fn(),
-      findUnique: jest.fn(),
-      findFirst: jest.fn(),
-      create: jest.fn(),
-      update: jest.fn(),
-      updateMany: jest.fn(),
-      upsert: jest.fn(),
-      delete: jest.fn(),
-      deleteMany: jest.fn(),
+      findMany: jest.fn<any>(),
+      findUnique: jest.fn<any>(),
+      findFirst: jest.fn<any>(),
+      create: jest.fn<any>(),
+      update: jest.fn<any>(),
+      updateMany: jest.fn<any>(),
+      upsert: jest.fn<any>(),
+      delete: jest.fn<any>(),
+      deleteMany: jest.fn<any>(),
     },
-    $transaction: jest.fn(),
+    $transaction: jest.fn<any>(),
   };
 
   beforeEach(async () => {
+    mockPrismaService.user.update.mockResolvedValue({});
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
@@ -78,12 +104,14 @@ describe('AuthService', () => {
       ],
     }).compile();
 
-    service = module.get<AuthService>(AuthService);
-    usersService = module.get<UsersService>(UsersService);
-    jwt = module.get<JwtService>(JwtService);
+    service = module.get(AuthService);
+    usersService = module.get(UsersService);
+    jwt = module.get(JwtService);
   });
 
   afterEach(() => {
+    service?.onModuleDestroy();
+    jest.useRealTimers();
     jest.clearAllMocks();
   });
 
@@ -667,6 +695,125 @@ describe('AuthService', () => {
       await expect(
         service.removeDevice('usr-1', 'dev-unknown', 'sess-current'),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('activityThrottleMap TTL cleanup & bounded memory', () => {
+    it('should throttle repeated updates within 5 minutes and allow update after TTL expires', () => {
+      jest.useFakeTimers({ now: 1_000_000 });
+      service.onModuleDestroy(); // stop constructor's real-timer interval
+      const localService = new AuthService(
+        mockUsersService as any,
+        mockPrismaService as any,
+        mockJwt as any,
+        { get: jest.fn() } as any,
+      );
+
+      try {
+        localService.recordActivityThrottled('user-1');
+        localService.recordActivityThrottled('user-1');
+        expect(mockPrismaService.user.update).toHaveBeenCalledTimes(1);
+        expect(localService.getActivityThrottleMapSize()).toBe(1);
+
+        // Advance 4 minutes (still within 5-min throttle window)
+        jest.advanceTimersByTime(4 * 60 * 1000);
+        localService.recordActivityThrottled('user-1');
+        expect(mockPrismaService.user.update).toHaveBeenCalledTimes(1);
+
+        // Advance 1 more minute (total 5 minutes -> TTL expired)
+        jest.advanceTimersByTime(60 * 1000);
+        localService.recordActivityThrottled('user-1');
+        expect(mockPrismaService.user.update).toHaveBeenCalledTimes(2);
+      } finally {
+        localService.onModuleDestroy();
+      }
+    });
+
+    it('should periodically remove expired entries from activityThrottleMap', () => {
+      jest.useFakeTimers({ now: 1_000_000 });
+      service.onModuleDestroy();
+      const localService = new AuthService(
+        mockUsersService as any,
+        mockPrismaService as any,
+        mockJwt as any,
+        { get: jest.fn() } as any,
+      );
+
+      try {
+        localService.recordActivityThrottled('user-old');
+        jest.advanceTimersByTime(3 * 60 * 1000);
+        localService.recordActivityThrottled('user-fresh');
+        expect(localService.getActivityThrottleMapSize()).toBe(2);
+
+        // Advance 2 more minutes -> interval runs at t+5m; user-old is 5m old (expired), user-fresh is 2m old (kept)
+        jest.advanceTimersByTime(2 * 60 * 1000);
+        expect(localService.getActivityThrottleMapSize()).toBe(1);
+
+        // Advance another 5 minutes -> user-fresh is now expired and cleaned up too
+        jest.advanceTimersByTime(5 * 60 * 1000);
+        expect(localService.getActivityThrottleMapSize()).toBe(0);
+      } finally {
+        localService.onModuleDestroy();
+      }
+    });
+
+    it('should prevent unbounded Map growth beyond max capacity', () => {
+      jest.useFakeTimers({ now: 1_000_000 });
+      service.onModuleDestroy();
+      const localService = new AuthService(
+        mockUsersService as any,
+        mockPrismaService as any,
+        mockJwt as any,
+        { get: jest.fn() } as any,
+      );
+
+      try {
+        for (let i = 0; i < 10_250; i++) {
+          localService.recordActivityThrottled(`user-${i}`);
+        }
+
+        expect(localService.getActivityThrottleMapSize()).toBe(10_000);
+      } finally {
+        localService.onModuleDestroy();
+      }
+    });
+
+    it('should purge expired entries first before evicting active entries when capacity is reached', () => {
+      jest.useFakeTimers({ now: 1_000_000 });
+      service.onModuleDestroy();
+      const localService = new AuthService(
+        mockUsersService as any,
+        mockPrismaService as any,
+        mockJwt as any,
+        { get: jest.fn() } as any,
+      );
+
+      try {
+        // Constructor ran at t=0 (interval runs at 5m, 10m, ...).
+        // Advance 1m so old-* are recorded at t=1m (only 4m old at first 5m tick).
+        jest.advanceTimersByTime(1 * 60 * 1000);
+        for (let i = 0; i < 5_000; i++) {
+          localService.recordActivityThrottled(`old-${i}`);
+        }
+
+        // Advance 4m -> t=5m: interval runs (old-* are 4m old, still active); record fresh-* at t=5m
+        jest.advanceTimersByTime(4 * 60 * 1000);
+        for (let i = 0; i < 4_999; i++) {
+          localService.recordActivityThrottled(`fresh-${i}`);
+        }
+        expect(localService.getActivityThrottleMapSize()).toBe(9_999);
+
+        // Advance 1m -> t=6m: old-* are now 5m old (expired), fresh-* are 1m old (active),
+        // and next interval isn't until t=10m. Capacity check purges expired old-* first.
+        jest.advanceTimersByTime(1 * 60 * 1000);
+        localService.recordActivityThrottled('trigger-1');
+        expect(localService.getActivityThrottleMapSize()).toBe(10_000);
+        localService.recordActivityThrottled('trigger-2');
+        // All 5,000 expired entries were purged, leaving 4,999 fresh + 2 triggers
+        expect(localService.getActivityThrottleMapSize()).toBe(5_001);
+      } finally {
+        localService.onModuleDestroy();
+      }
     });
   });
 });
