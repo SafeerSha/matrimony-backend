@@ -261,11 +261,25 @@ export class DiscoveryService {
         },
       });
       const userGender = (currentUser?.profile?.gender || '').toLowerCase().trim();
+      const userCatLower = (currentUser?.profile?.category || currentUser?.profile?.profileFor || '').toLowerCase().trim();
       const userRegisteredFriendship = isFriendshipIntent(currentUser?.profile);
       const isExploringFriendship = rawCategory.toLowerCase().includes('friend');
+      const isExploringLiveIn = rawCategory.toLowerCase().includes('live') || rawCategory.toLowerCase().includes('living');
+      const userRegisteredLiveIn = userCatLower.includes('live') || userCatLower.includes('living');
       const shouldShowAllGenders = isExploringFriendship || (userRegisteredFriendship && isAllCategories);
+      const isStrictMarriageMode =
+        !shouldShowAllGenders &&
+        !isExploringLiveIn &&
+        (!userRegisteredLiveIn || rawCategory.toLowerCase().includes('marr'));
 
-      if (!shouldShowAllGenders) {
+      if (isStrictMarriageMode) {
+        // Matrimony strictly enforces opposite-gender matching regardless of query.gender
+        if (userGender === 'male' || userGender === 'man') {
+          targetGender = 'women';
+        } else if (userGender === 'female' || userGender === 'woman') {
+          targetGender = 'men';
+        }
+      } else if (!shouldShowAllGenders) {
         // Enforce opposite gender by default (unless client explicitly specified a gender other than any)
         if (!query.gender || query.gender.toLowerCase() === 'any') {
           if (userGender === 'male' || userGender === 'man') {
@@ -544,17 +558,30 @@ export class DiscoveryService {
     const maritalStatus = userPref?.maritalStatuses ?? (Array.isArray(profilePrefs.maritalStatus) ? profilePrefs.maritalStatus[0] : profilePrefs.maritalStatus);
     if (maritalStatus && maritalStatus !== 'Open to All' && maritalStatus !== 'Any') query.maritalStatus = maritalStatus;
 
+    const userCatLower = (user.profile?.category || user.profile?.profileFor || '').toLowerCase().trim();
     const isFriendship = isFriendshipIntent(user.profile);
+    const isLiveIn = !isFriendship && (userCatLower.includes('live') || userCatLower.includes('living'));
 
-    if (profilePrefs.gender && profilePrefs.gender !== 'any') {
-      query.gender = profilePrefs.gender;
-    } else if (isFriendship) {
-      // Friendship users see all genders in recommendations
-      query.gender = 'any';
-    } else if (user.profile?.gender) {
-      const g = user.profile.gender.toLowerCase();
-      if (g === 'male' || g === 'man') query.gender = 'women';
-      else if (g === 'female' || g === 'woman') query.gender = 'men';
+    if (isFriendship) {
+      query.category = 'Friendship';
+      query.gender = profilePrefs.gender && profilePrefs.gender !== 'any' ? profilePrefs.gender : 'any';
+    } else if (isLiveIn) {
+      query.category = 'Live-In';
+      if (profilePrefs.gender && profilePrefs.gender !== 'any') {
+        query.gender = profilePrefs.gender;
+      } else if (user.profile?.gender) {
+        const g = user.profile.gender.toLowerCase();
+        if (g === 'male' || g === 'man') query.gender = 'women';
+        else if (g === 'female' || g === 'woman') query.gender = 'men';
+      }
+    } else {
+      query.category = 'Marriage';
+      // Matrimony recommendations strictly target the opposite gender
+      if (user.profile?.gender) {
+        const g = user.profile.gender.toLowerCase();
+        if (g === 'male' || g === 'man') query.gender = 'women';
+        else if (g === 'female' || g === 'woman') query.gender = 'men';
+      }
     }
 
     if (profilePrefs.caste && profilePrefs.caste !== 'Any') {

@@ -45,7 +45,7 @@ export class ChatService {
    * (all messages + grouped unread counts), reducing round trips from 1+2N to 3.
    */
   async getConversations(userId: string) {
-    const [connections, currentUser] = await Promise.all([
+    const [connections, currentUser, blockRecords] = await Promise.all([
       this.prisma.connection.findMany({
         where: {
           status: 'ACCEPTED',
@@ -104,7 +104,20 @@ export class ChatService {
         where: { id: userId },
         include: { profile: true, preference: true },
       }),
+      this.prisma.blockedUser
+        ? this.prisma.blockedUser.findMany({
+            where: {
+              OR: [{ blockerId: userId }, { blockedId: userId }],
+            },
+            select: { blockerId: true, blockedId: true },
+          })
+        : Promise.resolve([]),
     ]);
+
+    const blockedPartnerIds = new Set<string>();
+    for (const blk of blockRecords || []) {
+      blockedPartnerIds.add(blk.blockerId === userId ? blk.blockedId : blk.blockerId);
+    }
 
     const partnerIds = connections.map((c: any) =>
       c.senderId === userId ? c.receiverId : c.senderId,
@@ -250,6 +263,9 @@ export class ChatService {
 
     const visibleConversations = conversations.filter((c: any) => {
       const p = c.participant || c;
+      if (blockedPartnerIds.has(c.participantId || p.id)) {
+        return false;
+      }
       if (p.status === 'DELETED' || Boolean(p.deletedAt) || Boolean(p.deactivatedAt)) {
         return false;
       }
@@ -299,17 +315,29 @@ export class ChatService {
       throw new BadRequestException('This account no longer exists.');
     }
 
-    const blocked = await this.prisma.connection.findFirst({
-      where: {
-        status: 'BLOCKED',
-        OR: [
-          { senderId: userId, receiverId: contactId },
-          { senderId: contactId, receiverId: userId },
-        ],
-      },
-    });
+    const [blocked, peerBlocked] = await Promise.all([
+      this.prisma.connection.findFirst({
+        where: {
+          status: 'BLOCKED',
+          OR: [
+            { senderId: userId, receiverId: contactId },
+            { senderId: contactId, receiverId: userId },
+          ],
+        },
+      }),
+      this.prisma.blockedUser
+        ? this.prisma.blockedUser.findFirst({
+            where: {
+              OR: [
+                { blockerId: userId, blockedId: contactId },
+                { blockerId: contactId, blockedId: userId },
+              ],
+            },
+          })
+        : Promise.resolve(null),
+    ]);
 
-    if (blocked) {
+    if (blocked || peerBlocked) {
       throw new ForbiddenException('Cannot view chat with this profile.');
     }
 
@@ -454,17 +482,32 @@ export class ChatService {
       throw new BadRequestException('This account no longer exists.');
     }
 
-    const blocked = await this.prisma.connection.findFirst({
-      where: {
-        status: 'BLOCKED',
-        OR: [
-          { senderId, receiverId },
-          { senderId: receiverId, receiverId: senderId },
-        ],
-      },
-    });
+    const [blocked, peerBlocked] = await Promise.all([
+      this.prisma.connection.findFirst({
+        where: {
+          status: 'BLOCKED',
+          OR: [
+            { senderId, receiverId },
+            { senderId: receiverId, receiverId: senderId },
+          ],
+        },
+      }),
+      this.prisma.blockedUser
+        ? this.prisma.blockedUser.findFirst({
+            where: {
+              OR: [
+                { blockerId: senderId, blockedId: receiverId },
+                { blockerId: receiverId, blockedId: senderId },
+              ],
+            },
+          })
+        : Promise.resolve(null),
+    ]);
 
-    if (blocked) {
+    if (blocked || peerBlocked) {
+      if (peerBlocked && peerBlocked.blockerId === senderId) {
+        throw new ForbiddenException('You have blocked this member. Unblock them to send messages.');
+      }
       throw new ForbiddenException('Cannot message this profile.');
     }
 
@@ -574,6 +617,21 @@ export class ChatService {
     const contactId = await this.resolveUserId(rawContactId);
     if (userId === contactId) {
       throw new ForbiddenException('Cannot initiate chat with yourself.');
+    }
+
+    const peerBlocked = this.prisma.blockedUser
+      ? await this.prisma.blockedUser.findFirst({
+          where: {
+            OR: [
+              { blockerId: userId, blockedId: contactId },
+              { blockerId: contactId, blockedId: userId },
+            ],
+          },
+        })
+      : null;
+
+    if (peerBlocked) {
+      throw new ForbiddenException('Cannot initiate chat with this profile.');
     }
 
     const connection = await this.prisma.connection.findFirst({

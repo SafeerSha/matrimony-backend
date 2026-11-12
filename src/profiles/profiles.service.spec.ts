@@ -425,5 +425,30 @@ describe('ProfilesService', () => {
         service.getPublicProfile('IMC-12', '11111111-1111-1111-1111-111111111111', { excludeSelf: true }),
       ).rejects.toThrow(BadRequestException);
     });
+
+    it('should normalize same-gender bare lookingFor to opposite gender on Marriage public profiles', async () => {
+      const targetUserId = '22222222-2222-2222-2222-222222222222';
+      mockPrisma.profile.findFirst.mockResolvedValue({
+        id: 'prof-monisha',
+        userId: targetUserId,
+        category: 'Marriage',
+        profileFor: 'Marriage',
+        gender: 'female',
+        lookingFor: 'Female',
+        user: {
+          id: targetUserId,
+          profileId: 'IMC-A00029',
+          firstName: 'Monisha',
+          lastName: 'KG',
+          status: 'ACTIVE',
+          photos: [],
+        },
+      });
+      mockPrisma.user.findUnique.mockResolvedValue(null);
+      mockPrisma.connection.findFirst.mockResolvedValue(null);
+
+      const res = await service.getPublicProfile(targetUserId);
+      expect(res.lookingFor).toBe('Male');
+    });
   });
 });

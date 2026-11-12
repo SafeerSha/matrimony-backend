@@ -20,6 +20,10 @@ describe('ChatService', () => {
       findFirst: jest.fn<any>(),
       findMany: jest.fn<any>(),
     },
+    blockedUser: {
+      findFirst: jest.fn<any>(),
+      findMany: jest.fn<any>(),
+    },
     message: {
       create: jest.fn<any>(),
       findFirst: jest.fn<any>(),
@@ -65,6 +69,8 @@ describe('ChatService', () => {
       profile: null,
     }));
     mockPrisma.profile.findFirst.mockResolvedValue(null);
+    mockPrisma.blockedUser.findFirst.mockResolvedValue(null);
+    mockPrisma.blockedUser.findMany.mockResolvedValue([]);
     mockSubscriptionService.hasActiveChatPermit.mockResolvedValue(true);
 
     const module: TestingModule = await Test.createTestingModule({
@@ -124,6 +130,19 @@ describe('ChatService', () => {
     it('should throw BadRequestException if content is empty or whitespace only', async () => {
       await expect(service.sendMessage('user-1', 'user-2', '   ')).rejects.toThrow(
         BadRequestException,
+      );
+    });
+
+    it('should throw ForbiddenException (403) when sender has blocked receiver in BlockedUser', async () => {
+      mockPrisma.connection.findFirst.mockResolvedValue(null);
+      mockPrisma.blockedUser.findFirst.mockResolvedValue({
+        id: 'blk-1',
+        blockerId: 'user-1',
+        blockedId: 'user-2',
+      });
+
+      await expect(service.sendMessage('user-1', 'user-2', 'hello')).rejects.toThrow(
+        ForbiddenException,
       );
     });
   });
@@ -392,6 +411,39 @@ describe('ChatService', () => {
 
     it('should throw ForbiddenException if initiating chat with oneself', async () => {
       await expect(service.initiateChat('user-1', 'user-1')).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should filter blocked users from getConversations and forbid getChatHistory', async () => {
+      mockPrisma.blockedUser.findFirst.mockResolvedValue({
+        id: 'blk-1',
+        blockerId: 'user-1',
+        blockedId: 'user-2',
+      });
+      mockPrisma.connection.findFirst.mockResolvedValue(null);
+
+      await expect(service.getChatHistory('user-1', 'user-2')).rejects.toThrow(
+        ForbiddenException,
+      );
+
+      mockPrisma.blockedUser.findMany.mockResolvedValue([
+        { blockerId: 'user-1', blockedId: 'user-2' },
+      ]);
+      mockPrisma.connection.findMany.mockResolvedValue([
+        {
+          id: 'conn-blocked',
+          senderId: 'user-1',
+          receiverId: 'user-2',
+          status: 'ACCEPTED',
+          updatedAt: new Date(),
+          sender: { id: 'user-1', photos: [] },
+          receiver: { id: 'user-2', firstName: 'Blocked', photos: [] },
+        },
+      ]);
+      mockPrisma.message.findMany.mockResolvedValue([]);
+      mockPrisma.message.groupBy.mockResolvedValue([]);
+
+      const convs = await service.getConversations('user-1');
+      expect(convs).toEqual([]);
     });
   });
 });

@@ -50,6 +50,10 @@ model User {
   paymentTransactions PaymentTransaction[]
   supportInquiries    SupportInquiry[]
   feedbacks           Feedback[]
+  blockedUsers        BlockedUser[]     @relation("BlockerRelations")
+  blockedByUsers      BlockedUser[]     @relation("BlockedRelations")
+  reportsFiled        UserReport[]      @relation("ReportReporterRelations")
+  reportsReceived     UserReport[]      @relation("ReportedRelations")
 
   @@index([createdAt])
   @@index([lastActiveAt])
@@ -359,4 +363,40 @@ model Feedback {
   @@index([status])
   @@index([priority])
   @@index([createdAt])
+}
+
+model BlockedUser {
+  id        String   @id @default(uuid())
+  blockerId String   // who initiated the block
+  blockedId String   // who was blocked
+  createdAt DateTime @default(now())
+  reason    String?  // optional reason text
+
+  blocker User @relation("BlockerRelations", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("BlockedRelations", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@index([blockerId])
+  @@index([blockedId])
+}
+
+model UserReport {
+  id           String    @id @default(uuid())
+  reporterId   String    // who filed the report
+  reportedId   String    // who was reported
+  reason       String    // e.g. spam, harassment, fake_profile, inappropriate_content, other
+  description  String?
+  status       String    @default("PENDING") // PENDING, REVIEWED, RESOLVED, DISMISSED
+  adminNotes   String?
+  reviewedById String?
+  reviewedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  reporter User @relation("ReportReporterRelations", fields: [reporterId], references: [id], onDelete: Cascade)
+  reported User @relation("ReportedRelations", fields: [reportedId], references: [id], onDelete: Cascade)
+
+  @@index([reporterId])
+  @@index([reportedId])
+  @@index([status])
 }
