@@ -153,6 +153,29 @@ describe('ConnectionsService', () => {
     });
   });
 
+  describe('rejectInterest', () => {
+    it('should reject an incoming connection request by userId or profileId', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(null);
+      mockPrisma.profile.findFirst.mockResolvedValue({ userId: '1' });
+      const connection = { id: 'c1', senderId: '1', receiverId: '2', status: 'PENDING' };
+      mockPrisma.connection.findUnique.mockResolvedValue(connection);
+      mockPrisma.connection.update.mockResolvedValue({ ...connection, status: 'REJECTED' });
+
+      const result = await service.rejectInterest('2', 'IMC-A00001');
+      expect(result.status).toBe('REJECTED');
+      expect(mockPrisma.connection.update).toHaveBeenCalledWith({
+        where: { id: 'c1' },
+        data: { status: 'REJECTED' },
+      });
+    });
+
+    it('should throw NotFoundException when rejecting a missing request', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ id: '1' });
+      mockPrisma.connection.findUnique.mockResolvedValue(null);
+      await expect(service.rejectInterest('2', '1')).rejects.toThrow(NotFoundException);
+    });
+  });
+
   describe('shortlistProfile', () => {
     it('should throw BadRequestException if user shortlists themselves', async () => {
       mockPrisma.user.findUnique.mockResolvedValue({ id: 'u1' });

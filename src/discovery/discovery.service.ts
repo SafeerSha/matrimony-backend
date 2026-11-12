@@ -7,8 +7,10 @@ function isFriendshipIntent(profile?: { category?: string | null; profileFor?: s
   if (!profile) return false;
   const cat = (profile.category || '').toLowerCase().trim();
   const pf = (profile.profileFor || '').toLowerCase().trim();
-  const lf = (profile.lookingFor || '').toLowerCase().trim();
-  return cat.includes('friend') || pf.includes('friend') || lf.includes('friend');
+  if (cat) {
+    return cat.includes('friend');
+  }
+  return pf.includes('friend');
 }
 
 @Injectable()
@@ -135,23 +137,104 @@ export class DiscoveryService {
     const rawCategory = (query.category || '').trim();
     const isAllCategories = !rawCategory || rawCategory.toLowerCase() === 'all';
     if (!isAllCategories) {
-      let searchTerms = [rawCategory];
       const lower = rawCategory.toLowerCase();
       if (lower.includes('living') || lower.includes('live')) {
-        searchTerms = ['Living Together', 'living_together', 'Living-together', 'living', 'Live-In', 'Live-in', 'live_in', 'live'];
+        profileConditions.push({
+          AND: [
+            {
+              OR: [
+                { category: { contains: 'live', mode: 'insensitive' } },
+                { category: { contains: 'living', mode: 'insensitive' } },
+                {
+                  AND: [
+                    { OR: [{ category: null }, { category: '' }] },
+                    {
+                      OR: [
+                        { profileFor: { contains: 'live', mode: 'insensitive' } },
+                        { profileFor: { contains: 'living', mode: 'insensitive' } },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              NOT: {
+                OR: [
+                  { category: { contains: 'marr', mode: 'insensitive' } },
+                  { category: { contains: 'matrimon', mode: 'insensitive' } },
+                  { category: { contains: 'friend', mode: 'insensitive' } },
+                ],
+              },
+            },
+          ],
+        });
       } else if (lower.includes('friend')) {
-        searchTerms = ['Friendship', 'friendship', 'Friends', 'friend'];
-      } else if (lower.includes('marr')) {
-        searchTerms = ['Marriage', 'marriage', 'Matrimony', 'matrimony'];
+        profileConditions.push({
+          AND: [
+            {
+              OR: [
+                { category: { contains: 'friend', mode: 'insensitive' } },
+                {
+                  AND: [
+                    { OR: [{ category: null }, { category: '' }] },
+                    { profileFor: { contains: 'friend', mode: 'insensitive' } },
+                  ],
+                },
+              ],
+            },
+            {
+              NOT: {
+                OR: [
+                  { category: { contains: 'marr', mode: 'insensitive' } },
+                  { category: { contains: 'matrimon', mode: 'insensitive' } },
+                  { category: { contains: 'live', mode: 'insensitive' } },
+                  { category: { contains: 'living', mode: 'insensitive' } },
+                ],
+              },
+            },
+          ],
+        });
+      } else if (lower.includes('marr') || lower.includes('matrimon')) {
+        profileConditions.push({
+          AND: [
+            {
+              OR: [
+                { category: { contains: 'marr', mode: 'insensitive' } },
+                { category: { contains: 'matrimon', mode: 'insensitive' } },
+                {
+                  AND: [
+                    { OR: [{ category: null }, { category: '' }] },
+                    {
+                      OR: [
+                        { profileFor: { contains: 'marr', mode: 'insensitive' } },
+                        { profileFor: { contains: 'matrimon', mode: 'insensitive' } },
+                        { profileFor: null },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              NOT: {
+                OR: [
+                  { category: { contains: 'friend', mode: 'insensitive' } },
+                  { category: { contains: 'live', mode: 'insensitive' } },
+                  { category: { contains: 'living', mode: 'insensitive' } },
+                ],
+              },
+            },
+          ],
+        });
+      } else {
+        profileConditions.push({
+          OR: [
+            { category: { contains: rawCategory, mode: 'insensitive' } },
+            { profileFor: { contains: rawCategory, mode: 'insensitive' } },
+          ],
+        });
       }
-
-      profileConditions.push({
-        OR: [
-          ...searchTerms.map((t) => ({ category: { contains: t, mode: 'insensitive' } })),
-          ...searchTerms.map((t) => ({ profileFor: { contains: t, mode: 'insensitive' } })),
-          ...searchTerms.map((t) => ({ lookingFor: { contains: t, mode: 'insensitive' } })),
-        ],
-      });
     }
 
     // Marriage Sub-Category / Community Filter (Kerala, Telugu, Bharat)
