@@ -253,7 +253,8 @@ export class RmService {
     const limit = Math.min(100, Math.max(1, params.limit ?? 20));
     const skip = (page - 1) * limit;
 
-    const andConditions: Prisma.UserWhereInput[] = [];
+    // Exclude management/staff roles (RM, ADMIN) from the member directory
+    const andConditions: Prisma.UserWhereInput[] = [{ role: 'USER' }];
 
     const q = params.search?.trim();
     if (q) {
@@ -366,15 +367,16 @@ export class RmService {
   }
 
   async getUserStats() {
+    const memberWhere: Prisma.UserWhereInput = { role: 'USER' };
     const [total, friendship, liveIn, marriage, active, paid, unverified] = await Promise.all([
-      this.prisma.user.count(),
-      this.prisma.user.count({ where: FRIENDSHIP_CATEGORY_WHERE }),
-      this.prisma.user.count({ where: LIVE_IN_CATEGORY_WHERE }),
-      this.prisma.user.count({ where: this.buildCategoryWhere('Marriage')! }),
-      this.prisma.user.count({ where: { isBanned: false, status: 'ACTIVE' } }),
-      this.prisma.user.count({ where: { subscriptionTier: 'PAID' } }),
+      this.prisma.user.count({ where: memberWhere }),
+      this.prisma.user.count({ where: { AND: [memberWhere, FRIENDSHIP_CATEGORY_WHERE] } }),
+      this.prisma.user.count({ where: { AND: [memberWhere, LIVE_IN_CATEGORY_WHERE] } }),
+      this.prisma.user.count({ where: { AND: [memberWhere, this.buildCategoryWhere('Marriage')!] } }),
+      this.prisma.user.count({ where: { role: 'USER', isBanned: false, status: 'ACTIVE' } }),
+      this.prisma.user.count({ where: { role: 'USER', subscriptionTier: 'PAID' } }),
       this.prisma.user.count({
-        where: { isPhoneVerified: false, isEmailVerified: false },
+        where: { role: 'USER', isPhoneVerified: false, isEmailVerified: false },
       }),
     ]);
 
@@ -395,6 +397,7 @@ export class RmService {
     const cleanId = rawId.trim();
     const user = await this.prisma.user.findFirst({
       where: {
+        role: 'USER',
         OR: [
           { id: cleanId },
           { profileId: { equals: cleanId, mode: 'insensitive' } },
