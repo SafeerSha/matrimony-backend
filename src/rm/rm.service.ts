@@ -9,7 +9,11 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChatGateway } from '../chat/chat.gateway';
-import type { RmCategoryFilter, RmUserQueryDto } from './dto/rm-user-query.dto';
+import type {
+  RmCategoryFilter,
+  RmMarriageSubCategory,
+  RmUserQueryDto,
+} from './dto/rm-user-query.dto';
 import type { RmFeedbackQueryDto } from './dto/rm-feedback-query.dto';
 import type { UpdateRmFeedbackDto } from './dto/update-rm-feedback.dto';
 
@@ -217,6 +221,95 @@ const LIVE_IN_CATEGORY_WHERE: Prisma.UserWhereInput = {
   },
 };
 
+const KERALA_CITIES = [
+  'Kochi',
+  'Thrissur',
+  'Calicut',
+  'Kottayam',
+  'Trivandrum',
+  'Palakkad',
+  'Kozhikode',
+  'Ernakulam',
+  'Kannur',
+  'Alappuzha',
+  'Kollam',
+  'Malappuram',
+  'Kasaragod',
+  'Wayanad',
+  'Pathanamthitta',
+  'Idukki',
+];
+
+const TELUGU_CITIES = [
+  'Hyderabad',
+  'Visakhapatnam',
+  'Vizag',
+  'Vijayawada',
+  'Guntur',
+  'Warangal',
+  'Tirupati',
+  'Kurnool',
+  'Nellore',
+  'Rajahmundry',
+];
+
+const KERALA_SUBCATEGORY_WHERE: Prisma.UserWhereInput = {
+  profile: {
+    is: {
+      OR: [
+        { community: { contains: 'Kerala', mode: 'insensitive' } },
+        {
+          AND: [
+            { OR: [{ community: null }, { community: '' }] },
+            {
+              OR: [
+                { state: { contains: 'Kerala', mode: 'insensitive' } },
+                { motherTongue: { contains: 'Malayalam', mode: 'insensitive' } },
+                { city: { in: KERALA_CITIES, mode: 'insensitive' } },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  },
+};
+
+const TELUGU_SUBCATEGORY_WHERE: Prisma.UserWhereInput = {
+  profile: {
+    is: {
+      OR: [
+        { community: { contains: 'Telugu', mode: 'insensitive' } },
+        {
+          AND: [
+            { OR: [{ community: null }, { community: '' }] },
+            {
+              OR: [
+                { state: { contains: 'Andhra', mode: 'insensitive' } },
+                { state: { contains: 'Telangana', mode: 'insensitive' } },
+                { motherTongue: { contains: 'Telugu', mode: 'insensitive' } },
+                { city: { in: TELUGU_CITIES, mode: 'insensitive' } },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  },
+};
+
+const BHARAT_SUBCATEGORY_WHERE: Prisma.UserWhereInput = {
+  OR: [
+    { profile: { is: { community: { contains: 'Bharat', mode: 'insensitive' } } } },
+    {
+      AND: [
+        { NOT: KERALA_SUBCATEGORY_WHERE },
+        { NOT: TELUGU_SUBCATEGORY_WHERE },
+      ],
+    },
+  ],
+};
+
 @Injectable()
 export class RmService {
   constructor(
@@ -225,6 +318,19 @@ export class RmService {
     @Optional()
     private readonly chatGateway?: ChatGateway,
   ) {}
+
+  private buildMarriageSubCategoryWhere(
+    subCategories?: RmMarriageSubCategory[],
+  ): Prisma.UserWhereInput | null {
+    if (!subCategories || subCategories.length === 0) return null;
+    const unique = Array.from(new Set(subCategories));
+    const conditions: Prisma.UserWhereInput[] = [];
+    if (unique.includes('Kerala')) conditions.push(KERALA_SUBCATEGORY_WHERE);
+    if (unique.includes('Telugu')) conditions.push(TELUGU_SUBCATEGORY_WHERE);
+    if (unique.includes('Bharat')) conditions.push(BHARAT_SUBCATEGORY_WHERE);
+    if (conditions.length === 0) return null;
+    return conditions.length === 1 ? conditions[0] : { OR: conditions };
+  }
 
   private buildCategoryWhere(category?: RmCategoryFilter): Prisma.UserWhereInput | null {
     if (!category || category === 'ALL') return null;
@@ -289,6 +395,13 @@ export class RmService {
     const categoryWhere = this.buildCategoryWhere(params.category);
     if (categoryWhere) {
       andConditions.push(categoryWhere);
+    }
+
+    if (params.category === 'Marriage') {
+      const subCategoryWhere = this.buildMarriageSubCategoryWhere(params.subCategories);
+      if (subCategoryWhere) {
+        andConditions.push(subCategoryWhere);
+      }
     }
 
     if (params.plan && params.plan !== 'ALL') {
@@ -368,11 +481,28 @@ export class RmService {
 
   async getUserStats() {
     const memberWhere: Prisma.UserWhereInput = { role: 'USER' };
-    const [total, friendship, liveIn, marriage, active, paid, unverified] = await Promise.all([
+    const marriageWhere: Prisma.UserWhereInput = {
+      AND: [memberWhere, this.buildCategoryWhere('Marriage')!],
+    };
+    const [
+      total,
+      friendship,
+      liveIn,
+      marriage,
+      keralaCount,
+      teluguCount,
+      bharatCount,
+      active,
+      paid,
+      unverified,
+    ] = await Promise.all([
       this.prisma.user.count({ where: memberWhere }),
       this.prisma.user.count({ where: { AND: [memberWhere, FRIENDSHIP_CATEGORY_WHERE] } }),
       this.prisma.user.count({ where: { AND: [memberWhere, LIVE_IN_CATEGORY_WHERE] } }),
-      this.prisma.user.count({ where: { AND: [memberWhere, this.buildCategoryWhere('Marriage')!] } }),
+      this.prisma.user.count({ where: marriageWhere }),
+      this.prisma.user.count({ where: { AND: [marriageWhere, KERALA_SUBCATEGORY_WHERE] } }),
+      this.prisma.user.count({ where: { AND: [marriageWhere, TELUGU_SUBCATEGORY_WHERE] } }),
+      this.prisma.user.count({ where: { AND: [marriageWhere, BHARAT_SUBCATEGORY_WHERE] } }),
       this.prisma.user.count({ where: { role: 'USER', isBanned: false, status: 'ACTIVE' } }),
       this.prisma.user.count({ where: { role: 'USER', subscriptionTier: 'PAID' } }),
       this.prisma.user.count({
@@ -386,6 +516,11 @@ export class RmService {
         Marriage: marriage,
         Friendship: friendship,
         'Live-In': liveIn,
+      },
+      marriageSubCategories: {
+        Kerala: keralaCount,
+        Telugu: teluguCount,
+        Bharat: bharatCount,
       },
       active,
       paid,
@@ -512,7 +647,7 @@ export class RmService {
       await Promise.all([
         this.prisma.feedback.count(),
         this.prisma.feedback.count({
-          where: { status: { in: ['SUBMITTED', 'IN_REVIEW'] } },
+          where: { type: 'bug', status: { in: ['SUBMITTED', 'IN_REVIEW'] } },
         }),
         this.prisma.feedback.count({ where: { type: 'bug' } }),
         this.prisma.feedback.count({ where: { type: 'feature' } }),

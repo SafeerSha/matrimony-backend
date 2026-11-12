@@ -3,9 +3,11 @@ import { Type } from 'class-transformer';
 
 const PLAN_VALUES = ['ALL', 'BASIC', 'PAID'] as const;
 const STATUS_VALUES = ['ALL', 'ACTIVE', 'BLOCKED', 'SUSPENDED', 'DEACTIVATED', 'DELETED'] as const;
+const ROLE_FILTER_VALUES = ['ALL', 'USER', 'RM'] as const;
 
 export type PlanFilter = typeof PLAN_VALUES[number];
 export type StatusFilter = typeof STATUS_VALUES[number];
+export type RoleFilter = typeof ROLE_FILTER_VALUES[number];
 
 export class AdminUserQueryDto {
   @IsOptional()
@@ -38,6 +40,10 @@ export class AdminUserQueryDto {
   @IsOptional()
   @IsIn(STATUS_VALUES, { message: `status must be one of: ${STATUS_VALUES.join(', ')}` })
   status?: StatusFilter = 'ALL';
+
+  @IsOptional()
+  @IsIn(ROLE_FILTER_VALUES, { message: `role must be one of: ${ROLE_FILTER_VALUES.join(', ')}` })
+  role?: RoleFilter = 'ALL';
 }
 
 export class UpdateStatusBodyDto {

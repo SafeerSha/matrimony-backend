@@ -200,6 +200,11 @@ export class AdminService {
       where.subscriptionTier = params.plan;
     }
 
+    // Role filter (USER vs RM)
+    if (params.role && params.role !== 'ALL') {
+      where.role = params.role;
+    }
+
     // Status / block filter (indexed columns)
     if (params.status && params.status !== 'ALL') {
       switch (params.status) {
