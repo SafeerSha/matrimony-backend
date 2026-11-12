@@ -13,7 +13,7 @@ import { UpdateRmFeedbackDto } from './dto/update-rm-feedback.dto';
 @ApiBearerAuth('JWT-auth')
 @Controller('rm')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('RM')
+@Roles('RM', 'ADMIN')
 export class RmController {
   constructor(private readonly rmService: RmService) {}
 
