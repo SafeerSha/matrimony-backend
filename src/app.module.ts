@@ -24,6 +24,7 @@ import { MailModule } from './mail/mail.module';
 import { SmsModule } from './sms/sms.module';
 import { SupportModule } from './support/support.module';
 import { RmModule } from './rm/rm.module';
+import { ReportModule } from './report/report.module';
 
 @Module({
   imports: [
@@ -55,6 +56,7 @@ import { RmModule } from './rm/rm.module';
     SmsModule,
     SupportModule,
     RmModule,
+    ReportModule,
   ],
   providers: [
     {

@@ -124,6 +124,39 @@ describe('DiscoveryService', () => {
         ]),
       );
     });
+
+    it('should strictly restrict Matrimony/Marriage discovery to opposite gender even if query.gender requests same gender', async () => {
+      const currentUserId = 'female-matrimony-user';
+      mockPrisma.user.findUnique.mockResolvedValue({
+        profile: {
+          gender: 'female',
+          category: 'Marriage',
+          profileFor: 'Marriage',
+          lookingFor: 'Female',
+        },
+      });
+      mockPrisma.user.findMany.mockResolvedValue([]);
+      mockPrisma.user.count.mockResolvedValue(0);
+
+      const query = new SearchQueryDto();
+      query.category = 'Marriage';
+      query.gender = 'women';
+
+      await service.searchProfiles(query, currentUserId);
+
+      const findManyCall = mockPrisma.user.findMany.mock.calls[0][0];
+      const conditions = findManyCall.where.profile.AND;
+      expect(conditions).toEqual(
+        expect.arrayContaining([
+          { gender: { in: ['male', 'Male', 'men', 'Men'] } },
+        ]),
+      );
+      expect(conditions).not.toEqual(
+        expect.arrayContaining([
+          { gender: { in: ['female', 'Female', 'women', 'Women'] } },
+        ]),
+      );
+    });
   });
 
   describe('getRecommendations', () => {
@@ -169,6 +202,37 @@ describe('DiscoveryService', () => {
 
       const result = await service.getRecommendations('1');
       expect(result.data).toEqual([]);
+    });
+
+    it('should scope recommendations strictly to Friendship category for Friendship users', async () => {
+      const friendshipUserId = 'friendship-user-1';
+      mockPrisma.user.findUnique.mockResolvedValue({
+        id: friendshipUserId,
+        profile: {
+          gender: 'male',
+          category: 'Friendship',
+          profileFor: 'Friendship',
+          preferences: {},
+        },
+        preference: null,
+      });
+      mockPrisma.user.findMany.mockResolvedValue([]);
+      mockPrisma.user.count.mockResolvedValue(0);
+
+      await service.getRecommendations(friendshipUserId);
+
+      const findManyCall = mockPrisma.user.findMany.mock.calls[0][0];
+      const conditions = findManyCall.where.profile.AND;
+      expect(conditions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            OR: expect.arrayContaining([
+              { category: { contains: 'Friendship', mode: 'insensitive' } },
+              { profileFor: { contains: 'Friendship', mode: 'insensitive' } },
+            ]),
+          }),
+        ]),
+      );
     });
   });
 });

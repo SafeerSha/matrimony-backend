@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CompleteOnboardingDto } from './dto/complete-onboarding.dto';
 import { sanitizeText } from '../common/utils/sanitize.util';
+import { normalizeMarriageLookingFor } from '../common/utils/matrimony-gender.util';
 
 @Injectable()
 export class OnboardingService {
@@ -93,12 +94,23 @@ export class OnboardingService {
       const sanitizedFatherName = sanitizeText(dto.fatherName, 100);
       const sanitizedWorkingPlace = sanitizeText(dto.workingPlace || dto.workLocation, 255);
 
+      const effectiveCategory = dto.category || user.profile?.category;
+      const effectiveProfileFor = dto.profileFor || user.profile?.profileFor;
+      const normalizedLookingFor = normalizeMarriageLookingFor({
+        category: effectiveCategory,
+        profileFor: effectiveProfileFor,
+        gender: effectiveGender,
+        lookingFor: dto.lookingFor ?? user.profile?.lookingFor,
+      });
+
       const profileUpdateData: any = {
         onboardingStep: 5,
         ...(dto.gender ? { gender: dto.gender } : {}),
         ...(dto.category ? { category: sanitizeText(dto.category, 50) } : {}),
         ...(dto.profileFor ? { profileFor: sanitizeText(dto.profileFor, 50) } : {}),
-        ...(dto.lookingFor ? { lookingFor: sanitizeText(dto.lookingFor, 100) } : {}),
+        ...(normalizedLookingFor !== undefined && normalizedLookingFor !== null
+          ? { lookingFor: sanitizeText(normalizedLookingFor, 100) }
+          : {}),
         ...(dto.dateOfBirth ? { dateOfBirth: new Date(dto.dateOfBirth) } : {}),
         ...(sanitizedEducation ? { education: sanitizedEducation } : {}),
         ...(sanitizedOccupation ? { occupation: sanitizedOccupation } : {}),

@@ -6,6 +6,7 @@ import { UpdatePreferencesDto, transformToStringOrCsv } from './dto/update-prefe
 import { sanitizeStringArray, sanitizeText } from '../common/utils/sanitize.util';
 import { calculateCompatibility, calculateCompatibilityWithHighlights } from '../common/utils/compatibility.util';
 import { normalizePhoneNumber } from '../common/utils/phone.util';
+import { normalizeMarriageLookingFor } from '../common/utils/matrimony-gender.util';
 
 export function calculateAge(dob: Date | string | null | undefined): number | null {
   if (!dob) return null;
@@ -191,7 +192,13 @@ export class ProfilesService {
       familyDetails: user.profile?.familyDetails || null,
       lifestyle: user.profile?.lifestyle || [],
       interests: user.profile?.interests || [],
-      lookingFor: user.profile?.lookingFor || null,
+      lookingFor:
+        normalizeMarriageLookingFor({
+          category: user.profile?.category,
+          profileFor: user.profile?.profileFor,
+          gender: user.profile?.gender,
+          lookingFor: user.profile?.lookingFor,
+        }) || null,
       photos: formattedPhotos,
       preferences: formattedPreferences,
       // Backwards-compatibility legacy mappings
@@ -524,8 +531,17 @@ export class ProfilesService {
       const resolvedFullName =
         `${resolvedFirstName || ''} ${resolvedLastName || ''}`.trim() || 'Member';
 
+      const normalizedPublicLookingFor =
+        normalizeMarriageLookingFor({
+          category: sanitizedProfile.category,
+          profileFor: sanitizedProfile.profileFor,
+          gender: sanitizedProfile.gender,
+          lookingFor: sanitizedProfile.lookingFor,
+        }) ?? sanitizedProfile.lookingFor;
+
       return {
         ...sanitizedProfile,
+        lookingFor: normalizedPublicLookingFor,
         id: resolvedUserId,
         userId: resolvedUserId,
         profileTableId: profile.id,
@@ -714,6 +730,33 @@ export class ProfilesService {
     const effectiveLifestyle = lifestyle !== undefined ? sanitizeStringArray(lifestyle, 20, 100) : undefined;
     const effectiveInterests = interests !== undefined ? sanitizeStringArray(interests, 20, 100) : undefined;
 
+    const existingProfileForNormalize =
+      gender !== undefined || lookingFor !== undefined || category !== undefined || profileFor !== undefined
+        ? await this.prisma.profile.findUnique({
+            where: { userId },
+            select: { gender: true, lookingFor: true, category: true, profileFor: true },
+          })
+        : null;
+
+    const resolvedCategory = category !== undefined ? category : existingProfileForNormalize?.category;
+    const resolvedProfileFor = profileFor !== undefined ? profileFor : existingProfileForNormalize?.profileFor;
+    const resolvedGender = gender !== undefined ? gender : existingProfileForNormalize?.gender;
+    const rawLookingForCandidate = lookingFor !== undefined ? lookingFor : existingProfileForNormalize?.lookingFor;
+    const normalizedUpdateLookingFor =
+      existingProfileForNormalize !== null
+        ? normalizeMarriageLookingFor({
+            category: resolvedCategory,
+            profileFor: resolvedProfileFor,
+            gender: resolvedGender,
+            lookingFor: rawLookingForCandidate,
+          })
+        : lookingFor;
+
+    const shouldPersistNormalizedLookingFor =
+      lookingFor !== undefined ||
+      (normalizedUpdateLookingFor !== undefined &&
+        normalizedUpdateLookingFor !== existingProfileForNormalize?.lookingFor);
+
     const profileData: any = {
       ...rest,
       ...(firstName !== undefined ? { firstName: sanitizeText(firstName, 50) } : {}),
@@ -736,7 +779,14 @@ export class ProfilesService {
       ...(sistersCount !== undefined ? { sistersCount: Number(sistersCount) } : {}),
       ...(sistersMarried !== undefined ? { sistersMarried: Number(sistersMarried) } : {}),
       ...(familyDetails !== undefined ? { familyDetails } : {}),
-      ...(lookingFor !== undefined ? { lookingFor: sanitizeText(lookingFor, 1500) ?? null } : {}),
+      ...(shouldPersistNormalizedLookingFor
+        ? {
+            lookingFor:
+              normalizedUpdateLookingFor !== undefined && normalizedUpdateLookingFor !== null
+                ? sanitizeText(normalizedUpdateLookingFor, 1500) ?? null
+                : null,
+          }
+        : {}),
       ...(city !== undefined ? { city: sanitizeText(city, 100) ?? null } : {}),
       ...(state !== undefined ? { state: sanitizeText(state, 100) ?? null } : {}),
       ...(country !== undefined ? { country: sanitizeText(country, 100) ?? null } : {}),
