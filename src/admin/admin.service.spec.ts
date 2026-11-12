@@ -402,4 +402,31 @@ describe('AdminService', () => {
       ).rejects.toThrow(ConflictException);
     });
   });
+
+  describe('getUsers', () => {
+    it('should filter by role USER or RM when role query is provided', async () => {
+      mockPrisma.user.findMany.mockResolvedValue([]);
+      mockPrisma.user.count.mockResolvedValue(0);
+
+      await service.getUsers({ role: 'RM', page: 1, limit: 15 });
+      expect(mockPrisma.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ role: 'RM' }),
+        }),
+      );
+
+      mockPrisma.user.findMany.mockClear();
+      await service.getUsers({ role: 'USER', page: 1, limit: 15 });
+      expect(mockPrisma.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ role: 'USER' }),
+        }),
+      );
+
+      mockPrisma.user.findMany.mockClear();
+      await service.getUsers({ role: 'ALL', page: 1, limit: 15 });
+      const allCallWhere = mockPrisma.user.findMany.mock.calls[0][0].where;
+      expect(allCallWhere).not.toHaveProperty('role');
+    });
+  });
 });

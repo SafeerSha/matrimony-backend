@@ -94,9 +94,30 @@ describe('RmService', () => {
         const where = call[0]?.where;
         expect(
           where?.role === 'USER' ||
-            (Array.isArray(where?.AND) && where.AND.some((c: any) => c.role === 'USER')),
+            (Array.isArray(where?.AND) &&
+              where.AND.some(
+                (c: any) =>
+                  c.role === 'USER' ||
+                  (Array.isArray(c?.AND) && c.AND.some((n: any) => n.role === 'USER')),
+              )),
         ).toBe(true);
       }
+    });
+
+    it('should apply OR condition when multiple Marriage subCategories are selected', async () => {
+      mockPrisma.user.findMany.mockResolvedValue([]);
+      mockPrisma.user.count.mockResolvedValue(0);
+
+      await service.getUsers({
+        category: 'Marriage',
+        subCategories: ['Kerala', 'Telugu'],
+        page: 1,
+        limit: 15,
+      });
+
+      const findManyArg = mockPrisma.user.findMany.mock.calls[0][0];
+      const orClause = findManyArg.where.AND.find((c: any) => Array.isArray(c.OR) && c.OR.length === 2);
+      expect(orClause).toBeDefined();
     });
   });
 
@@ -157,6 +178,9 @@ describe('RmService', () => {
         openCount: 4,
         byType: { bug: 3, feature: 5, general: 2 },
         averageRating: 4.3,
+      });
+      expect(mockPrisma.feedback.count).toHaveBeenCalledWith({
+        where: { type: 'bug', status: { in: ['SUBMITTED', 'IN_REVIEW'] } },
       });
     });
 
