@@ -220,7 +220,8 @@ export class ConnectionsService {
     };
   }
 
-  async acceptInterest(receiverId: string, senderId: string) {
+  async acceptInterest(receiverId: string, rawSenderId: string) {
+    const senderId = await this.resolveUserId(rawSenderId);
     const connection = await this.prisma.connection.findUnique({
       where: {
         senderId_receiverId: {

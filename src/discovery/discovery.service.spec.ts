@@ -223,16 +223,9 @@ describe('DiscoveryService', () => {
 
       const findManyCall = mockPrisma.user.findMany.mock.calls[0][0];
       const conditions = findManyCall.where.profile.AND;
-      expect(conditions).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            OR: expect.arrayContaining([
-              { category: { contains: 'Friendship', mode: 'insensitive' } },
-              { profileFor: { contains: 'Friendship', mode: 'insensitive' } },
-            ]),
-          }),
-        ]),
-      );
+      expect(JSON.stringify(conditions)).toContain('"category":{"contains":"friend","mode":"insensitive"}');
+      expect(JSON.stringify(conditions)).toContain('"NOT":{"OR":[{"category":{"contains":"marr","mode":"insensitive"}}');
+      expect(JSON.stringify(conditions)).not.toContain('"lookingFor"');
     });
   });
 });
