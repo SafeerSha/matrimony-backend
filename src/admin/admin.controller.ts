@@ -7,7 +7,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { AnalyticsQueryDto, AnalyticsTimeSeriesQueryDto } from './dto/analytics-query.dto';
-import { AdminUserQueryDto, UpdateStatusBodyDto, UpdateTierBodyDto, VerifyPhotoBodyDto, AssignPlanBodyDto } from './dto/user-query.dto';
+import { AdminUserQueryDto, CreateAdminUserDto, UpdateStatusBodyDto, UpdateTierBodyDto, VerifyPhotoBodyDto, AssignPlanBodyDto } from './dto/user-query.dto';
 import { CreatePlanDto, UpdatePlanDto } from './dto/plan.dto';
 import { SubscriptionService } from '../subscription/subscription.service';
 import { ApiOperation } from '@nestjs/swagger';
@@ -42,6 +42,12 @@ export class AdminController {
   @Get('users')
   async getUsers(@Query() query: AdminUserQueryDto) {
     return this.adminService.getUsers(query);
+  }
+
+  @Post('users')
+  @ApiOperation({ summary: 'Create a normal (USER) or Relationship Manager (RM) account' })
+  async createUser(@Body() body: CreateAdminUserDto) {
+    return this.adminService.createUser(body);
   }
 
   @Get('stats')

@@ -1,9 +1,10 @@
-import { Controller, Get, Put, Param, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Put, Param, Body, UseGuards, Query } from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { UpdateNotificationPreferencesDto } from './dto/update-notification-preferences.dto';
+import { NotificationQueryDto } from './dto/notification-query.dto';
 
 @ApiTags('Notifications')
 @ApiBearerAuth('JWT-auth')
@@ -13,8 +14,11 @@ export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 
   @Get()
-  async getNotifications(@CurrentUser() user: any) {
-    return this.notificationsService.getUserNotifications(user.sub);
+  async getNotifications(
+    @CurrentUser() user: any,
+    @Query() query: NotificationQueryDto = {},
+  ) {
+    return this.notificationsService.getUserNotifications(user.sub, query);
   }
 
   @Get('preferences')

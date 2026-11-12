@@ -4,6 +4,7 @@ import { ConnectionsService } from './connections.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { ConnectionQueryDto } from './dto/connection-query.dto';
 
 @ApiTags('Connections')
 @ApiBearerAuth('JWT-auth')
@@ -58,7 +59,8 @@ export class ConnectionsController {
   async getConnections(
     @CurrentUser() user: any,
     @Query('type') type: 'sent' | 'received' | 'matches' | 'shortlisted' | 'shortlisted_by_me' | 'shortlisted_you' | 'declined',
+    @Query() query: ConnectionQueryDto = {},
   ) {
-    return this.connectionsService.getConnections(user.sub, type);
+    return this.connectionsService.getConnections(user.sub, type, query);
   }
 }

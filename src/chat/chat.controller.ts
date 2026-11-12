@@ -1,10 +1,11 @@
-import { Controller, Get, Post, Put, Param, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Put, Param, Body, Query, UseGuards } from '@nestjs/common';
 import { Throttle } from '../common/decorators/throttle.decorator';
 import { ChatService } from './chat.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SubscriptionPermitGuard, RequirePermit } from '../subscription/guards/subscription-permit.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { ChatHistoryQueryDto } from './dto/chat-history-query.dto';
 
 @ApiTags('Chat')
 @ApiBearerAuth('JWT-auth')
@@ -33,17 +34,22 @@ export class ChatController {
   }
 
   @Get('history/:contactId')
-  async getHistory(@CurrentUser() user: any, @Param('contactId') contactId: string) {
-    return this.chatService.getChatHistory(user.sub, contactId);
+  async getHistory(
+    @CurrentUser() user: any,
+    @Param('contactId') contactId: string,
+    @Query() query: ChatHistoryQueryDto = {},
+  ) {
+    return this.chatService.getChatHistory(user.sub, contactId, query);
   }
 
   @Get('conversations/:conversationId/messages')
   async getConversationMessages(
     @CurrentUser() user: any,
-    @Param('conversationId') conversationId: string
+    @Param('conversationId') conversationId: string,
+    @Query() query: ChatHistoryQueryDto = {},
   ) {
     const contactId = conversationId.replace('conv-', '');
-    return this.chatService.getChatHistory(user.sub, contactId);
+    return this.chatService.getChatHistory(user.sub, contactId, query);
   }
 
   @Throttle({ default: { limit: 30, ttl: 60000 } })

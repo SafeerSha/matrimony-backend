@@ -1,10 +1,22 @@
-import { Inject, Injectable, NotFoundException, forwardRef, Optional } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+  forwardRef,
+  Optional,
+} from '@nestjs/common';
+import * as argon2 from 'argon2';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { STORAGE_SERVICE, StorageService } from '../storage/storage.interface';
 import { SubscriptionService } from '../subscription/subscription.service';
 import { ChatGateway } from '../chat/chat.gateway';
-import type { AdminUserQueryDto, AssignPlanBodyDto } from './dto/user-query.dto';
+import { UsersService } from '../users/users.service';
+import { normalizePhoneNumber } from '../common/utils/phone.util';
+import { sanitizeText } from '../common/utils/sanitize.util';
+import type { AdminUserQueryDto, AssignPlanBodyDto, CreateAdminUserDto } from './dto/user-query.dto';
 
 /** Shared select for admin user list — never expose credential fields */
 const USER_LIST_SELECT = {
@@ -70,7 +82,85 @@ export class AdminService {
     @Inject(forwardRef(() => ChatGateway))
     @Optional()
     private readonly chatGateway?: ChatGateway,
+    @Optional()
+    private readonly usersService?: UsersService,
   ) {}
+
+  async createUser(dto: CreateAdminUserDto) {
+    const email = dto.email.trim().toLowerCase();
+    const firstName = sanitizeText(dto.firstName, 100);
+    const lastName = sanitizeText(dto.lastName, 100) || null;
+
+    if (!firstName) {
+      throw new BadRequestException('First name is required');
+    }
+
+    const existingByEmail = await this.prisma.user.findUnique({
+      where: { email },
+      select: { id: true },
+    });
+    if (existingByEmail) {
+      throw new ConflictException('A user with this email address already exists.');
+    }
+
+    let normalizedPhone: string | null = null;
+    if (dto.phone && dto.phone.trim().length > 0) {
+      normalizedPhone = normalizePhoneNumber(dto.phone.trim());
+      if (!normalizedPhone) {
+        throw new BadRequestException('Please provide a valid phone number.');
+      }
+      const existingByPhone = await this.prisma.user.findUnique({
+        where: { phone: normalizedPhone },
+        select: { id: true },
+      });
+      if (existingByPhone) {
+        throw new ConflictException('A user with this phone number already exists.');
+      }
+    }
+
+    const passwordHash = await argon2.hash(dto.password);
+    const profileId = this.usersService
+      ? await this.usersService.generateUniqueProfileId()
+      : `IMC-${Date.now().toString(36).toUpperCase().slice(-6)}`;
+
+    const isRm = dto.role === 'RM';
+    const now = new Date();
+
+    const createdUser = await this.prisma.user.create({
+      data: {
+        email,
+        ...(normalizedPhone ? { phone: normalizedPhone } : {}),
+        passwordHash,
+        isPasswordEnabled: true,
+        passwordChangedAt: now,
+        isEmailVerified: true,
+        firstName,
+        lastName,
+        profileId,
+        role: isRm ? 'RM' : 'USER',
+        // Normal users start in DRAFT so login routes them into the onboarding flow;
+        // RM users start ACTIVE so they enter /rm directly without onboarding.
+        status: isRm ? 'ACTIVE' : 'DRAFT',
+        ...(!isRm
+          ? {
+              profile: {
+                create: {
+                  firstName,
+                  lastName,
+                  onboardingStep: 1,
+                },
+              },
+            }
+          : {}),
+      },
+      select: USER_LIST_SELECT,
+    });
+
+    return {
+      ...createdUser,
+      isOnline: false,
+    };
+  }
 
   async getUsers(params: AdminUserQueryDto = {}) {
     const page = Math.max(1, params.page ?? 1);

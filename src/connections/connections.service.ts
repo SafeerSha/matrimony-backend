@@ -4,6 +4,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { ChatGateway } from '../chat/chat.gateway';
 import { SubscriptionService } from '../subscription/subscription.service';
 import { calculateCompatibility } from '../common/utils/compatibility.util';
+import { ConnectionQueryDto, DEFAULT_CONNECTION_LIMIT, MAX_CONNECTION_LIMIT } from './dto/connection-query.dto';
 
 @Injectable()
 export class ConnectionsService {
@@ -519,10 +520,23 @@ export class ConnectionsService {
     };
   }
 
+  private async safeCount(fn: () => Promise<number>): Promise<number> {
+    try {
+      return (await fn()) ?? 0;
+    } catch {
+      return 0;
+    }
+  }
+
   async getConnections(
     userId: string,
     type: 'sent' | 'received' | 'matches' | 'shortlisted' | 'shortlisted_by_me' | 'shortlisted_you' | 'declined',
+    query: ConnectionQueryDto = {},
   ) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? DEFAULT_CONNECTION_LIMIT;
+    const skip = (page - 1) * limit;
+
     const userSelect = {
       id: true,
       firstName: true,
@@ -543,44 +557,75 @@ export class ConnectionsService {
     });
 
     let connections: any[] = [];
+    let total = 0;
 
     switch (type) {
       case 'sent': {
-        const sent = await this.prisma.connection.findMany({
-          where: { senderId: userId, status: 'PENDING' },
-          include: { receiver: { select: userSelect } },
-          orderBy: { createdAt: 'desc' },
-        });
+        const [sent, count] = await Promise.all([
+          this.prisma.connection.findMany({
+            where: { senderId: userId, status: 'PENDING' },
+            include: { receiver: { select: userSelect } },
+            orderBy: { createdAt: 'desc' },
+            skip,
+            take: limit,
+          }),
+          this.safeCount(() =>
+            this.prisma.connection.count({
+              where: { senderId: userId, status: 'PENDING' },
+            }),
+          ),
+        ]);
         connections = sent.map((c: any) => ({
           ...c,
           partner: c.receiver,
         }));
+        total = count;
         break;
       }
 
       case 'received': {
-        const received = await this.prisma.connection.findMany({
-          where: { receiverId: userId, status: 'PENDING' },
-          include: { sender: { select: userSelect } },
-          orderBy: { createdAt: 'desc' },
-        });
+        const [received, count] = await Promise.all([
+          this.prisma.connection.findMany({
+            where: { receiverId: userId, status: 'PENDING' },
+            include: { sender: { select: userSelect } },
+            orderBy: { createdAt: 'desc' },
+            skip,
+            take: limit,
+          }),
+          this.safeCount(() =>
+            this.prisma.connection.count({
+              where: { receiverId: userId, status: 'PENDING' },
+            }),
+          ),
+        ]);
         connections = received.map((c: any) => ({
           ...c,
           partner: c.sender,
         }));
+        total = count;
         break;
       }
 
       case 'declined': {
-        const declined = await this.prisma.connection.findMany({
-          where: { senderId: userId, status: 'REJECTED' },
-          include: { receiver: { select: userSelect } },
-          orderBy: { updatedAt: 'desc' },
-        });
+        const [declined, count] = await Promise.all([
+          this.prisma.connection.findMany({
+            where: { senderId: userId, status: 'REJECTED' },
+            include: { receiver: { select: userSelect } },
+            orderBy: { updatedAt: 'desc' },
+            skip,
+            take: limit,
+          }),
+          this.safeCount(() =>
+            this.prisma.connection.count({
+              where: { senderId: userId, status: 'REJECTED' },
+            }),
+          ),
+        ]);
         connections = declined.map((c: any) => ({
           ...c,
           partner: c.receiver,
         }));
+        total = count;
         break;
       }
 
@@ -590,16 +635,21 @@ export class ConnectionsService {
           where: { senderId: userId, status: 'SHORTLISTED' },
           include: { receiver: { select: userSelect } },
           orderBy: { updatedAt: 'desc' },
+          take: limit,
         });
         const listFromConnections = shortlists.map((s: any) => ({
           ...s,
           partner: s.receiver,
           isShortlisted: true,
         }));
-        const existingPartnerIds = new Set(listFromConnections.map((c: any) => c.partner?.id).filter(Boolean));
+        const existingPartnerIds = new Set(
+          listFromConnections.map((c: any) => c.partner?.id).filter(Boolean),
+        );
 
         const favoriteIds = await this.getFavoriteIds(userId);
-        const remainingFavoriteIds = favoriteIds.filter((id) => !existingPartnerIds.has(id));
+        const remainingFavoriteIds = favoriteIds.filter(
+          (id) => !existingPartnerIds.has(id),
+        );
 
         if (remainingFavoriteIds.length > 0) {
           const favoriteUsers = await this.prisma.user.findMany({
@@ -611,6 +661,7 @@ export class ConnectionsService {
               deactivatedAt: null,
             },
             select: userSelect,
+            take: limit,
           });
 
           const favoriteConnections = await this.prisma.connection.findMany({
@@ -624,7 +675,8 @@ export class ConnectionsService {
 
           const connMap = new Map<string, any>();
           favoriteConnections.forEach((conn) => {
-            const otherId = conn.senderId === userId ? conn.receiverId : conn.senderId;
+            const otherId =
+              conn.senderId === userId ? conn.receiverId : conn.senderId;
             connMap.set(otherId, conn);
           });
 
@@ -638,7 +690,9 @@ export class ConnectionsService {
               createdAt: conn?.createdAt || new Date(),
               updatedAt: conn?.updatedAt || new Date(),
               partner: u,
-              isInterestSent: conn?.senderId === userId && (conn?.status === 'PENDING' || conn?.status === 'ACCEPTED'),
+              isInterestSent:
+                conn?.senderId === userId &&
+                (conn?.status === 'PENDING' || conn?.status === 'ACCEPTED'),
               isMatched: conn?.status === 'ACCEPTED',
               isShortlisted: true,
             };
@@ -648,47 +702,122 @@ export class ConnectionsService {
         } else {
           connections = listFromConnections;
         }
+
+        // Total count for shortlisted = SHORTLISTED connections + favorite IDs not already in connections
+        const [connCount, favCount] = await Promise.all([
+          this.safeCount(() =>
+            this.prisma.connection.count({
+              where: { senderId: userId, status: 'SHORTLISTED' },
+            }),
+          ),
+          this.safeCount(() =>
+            this.prisma.user.count({
+              where: {
+                id: { in: favoriteIds },
+                status: 'ACTIVE',
+                isBanned: false,
+                deletedAt: null,
+                deactivatedAt: null,
+              },
+            }),
+          ),
+        ]);
+        total = connCount + Math.max(0, favCount - existingPartnerIds.size);
         break;
       }
 
       case 'shortlisted_you': {
-        const shortlists = await this.prisma.connection.findMany({
-          where: { receiverId: userId, status: 'SHORTLISTED' },
-          include: { sender: { select: userSelect } },
-          orderBy: { updatedAt: 'desc' },
-        });
+        const [shortlists, count] = await Promise.all([
+          this.prisma.connection.findMany({
+            where: { receiverId: userId, status: 'SHORTLISTED' },
+            include: { sender: { select: userSelect } },
+            orderBy: { updatedAt: 'desc' },
+            skip,
+            take: limit,
+          }),
+          this.safeCount(() =>
+            this.prisma.connection.count({
+              where: { receiverId: userId, status: 'SHORTLISTED' },
+            }),
+          ),
+        ]);
         connections = shortlists.map((s: any) => ({
           ...s,
           partner: s.sender,
         }));
+        total = count;
         break;
       }
 
       case 'matches': {
-        const matches = await this.prisma.connection.findMany({
-          where: {
-            status: 'ACCEPTED',
-            OR: [
-              { senderId: userId },
-              { receiverId: userId },
-            ],
-          },
-          include: {
-            sender: { select: userSelect },
-            receiver: { select: userSelect },
-          },
-          orderBy: { updatedAt: 'desc' },
-        });
+        const [matches, count] = await Promise.all([
+          this.prisma.connection.findMany({
+            where: {
+              status: 'ACCEPTED',
+              OR: [
+                { senderId: userId },
+                { receiverId: userId },
+              ],
+            },
+            include: {
+              sender: { select: userSelect },
+              receiver: { select: userSelect },
+            },
+            orderBy: { updatedAt: 'desc' },
+            skip,
+            take: limit,
+          }),
+          this.safeCount(() =>
+            this.prisma.connection.count({
+              where: {
+                status: 'ACCEPTED',
+                OR: [
+                  { senderId: userId },
+                  { receiverId: userId },
+                ],
+              },
+            }),
+          ),
+        ]);
+        const partnerIds = matches
+          .map((m: any) => (m.senderId === userId ? m.receiverId : m.senderId))
+          .filter(Boolean);
+
+        const chatPartnerIds = new Set<string>();
+        if (partnerIds.length > 0 && this.prisma.message?.findMany) {
+          try {
+            const existingMessages = await this.prisma.message.findMany({
+              where: {
+                OR: [
+                  { senderId: userId, receiverId: { in: partnerIds } },
+                  { senderId: { in: partnerIds }, receiverId: userId },
+                ],
+              },
+              select: { senderId: true, receiverId: true },
+              distinct: ['senderId', 'receiverId'],
+            });
+            for (const msg of existingMessages) {
+              const otherId = msg.senderId === userId ? msg.receiverId : msg.senderId;
+              chatPartnerIds.add(otherId);
+            }
+          } catch {
+            // Non-fatal fallback: default hasChat to false if message lookup fails
+          }
+        }
 
         connections = matches.map((m: any) => {
           const isSender = m.senderId === userId;
           const partner = isSender ? m.receiver : m.sender;
+          const partnerId = partner?.id || (isSender ? m.receiverId : m.senderId);
+          const hasChat = Boolean(partnerId && chatPartnerIds.has(partnerId));
           return {
             ...m,
             partner,
             isMutualMatch: true,
+            hasChat,
           };
         });
+        total = count;
         break;
       }
 
@@ -698,7 +827,7 @@ export class ConnectionsService {
 
     const FIVE_MINUTES_MS = 5 * 60 * 1000;
 
-    return connections
+    const processed = connections
       .map((conn) => {
         const partner =
           conn.partner ||
@@ -732,19 +861,28 @@ export class ConnectionsService {
           partner.compatibility = score;
           (conn as any).compatibility = score;
 
-          const parsedLastActive = partner.lastActiveAt ? new Date(partner.lastActiveAt) : null;
+          const parsedLastActive = partner.lastActiveAt
+            ? new Date(partner.lastActiveAt)
+            : null;
           const lastActive =
-            parsedLastActive && !isNaN(parsedLastActive.getTime()) ? parsedLastActive : null;
+            parsedLastActive && !isNaN(parsedLastActive.getTime())
+              ? parsedLastActive
+              : null;
           const isOnline = lastActive
             ? Date.now() - lastActive.getTime() <= FIVE_MINUTES_MS
             : false;
-          const lastActiveIso = lastActive ? lastActive.toISOString() : null;
+          const lastActiveIso = lastActive
+            ? lastActive.toISOString()
+            : null;
 
           partner.isOnline = isOnline;
           partner.online = isOnline;
           partner.lastActiveAt = lastActiveIso;
           (conn as any).isOnline = isOnline;
           (conn as any).lastActiveAt = lastActiveIso;
+          if (typeof (conn as any).hasChat === 'boolean') {
+            partner.hasChat = (conn as any).hasChat;
+          }
 
           delete partner.isBanned;
           delete partner.deletedAt;
@@ -753,5 +891,15 @@ export class ConnectionsService {
         }
         return conn;
       });
+
+    return {
+      data: processed,
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
   }
 }

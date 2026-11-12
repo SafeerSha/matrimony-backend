@@ -149,8 +149,13 @@ async function bootstrap(){
   });
 
   const port = Number(process.env.PORT || 4000);
+  await app.init();
   await app.listen(port);
   console.log(`Application running on http://127.0.0.1:${port}/${process.env.API_PREFIX || 'api/v1'}`);
   console.log(`Swagger documentation available at http://0.0.0.0:${port}/api/docs`);
+
+  // Enable graceful shutdown hooks (SIGTERM/SIGINT).
+  // Triggers onModuleDestroy on all providers (PrismaService.$disconnect, ChatGateway cleanup).
+  app.enableShutdownHooks();
 }
 bootstrap();

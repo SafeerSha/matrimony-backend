@@ -23,6 +23,7 @@ import { PaymentModule } from './payment/payment.module';
 import { MailModule } from './mail/mail.module';
 import { SmsModule } from './sms/sms.module';
 import { SupportModule } from './support/support.module';
+import { RmModule } from './rm/rm.module';
 
 @Module({
   imports: [
@@ -53,6 +54,7 @@ import { SupportModule } from './support/support.module';
     MailModule,
     SmsModule,
     SupportModule,
+    RmModule,
   ],
   providers: [
     {

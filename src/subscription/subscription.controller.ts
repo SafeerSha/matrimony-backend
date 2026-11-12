@@ -6,12 +6,14 @@ import {
   Param,
   UseGuards,
   BadRequestException,
+  Query,
 } from '@nestjs/common';
 import { SubscriptionService } from './subscription.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { Throttle } from '../common/decorators/throttle.decorator';
+import { ContactUnlockQueryDto } from './dto/contact-unlock-query.dto';
 
 @ApiTags('Subscription')
 @Controller('subscription')
@@ -71,12 +73,15 @@ export class SubscriptionController {
   @ApiBearerAuth('JWT-auth')
   @UseGuards(JwtAuthGuard)
   @Get('contacts/my-unlocked')
-  async getMyUnlockedContacts(@CurrentUser() user: any) {
+  async getMyUnlockedContacts(
+    @CurrentUser() user: any,
+    @Query() query: ContactUnlockQueryDto = {},
+  ) {
     const userId = user?.sub || user?.id;
     if (!userId) {
       throw new BadRequestException('Authenticated user identification missing');
     }
-    return this.subscriptionService.getUnlockedContacts(userId);
+    return this.subscriptionService.getUnlockedContacts(userId, query);
   }
 
   @ApiBearerAuth('JWT-auth')
