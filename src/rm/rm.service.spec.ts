@@ -83,7 +83,20 @@ describe('RmService', () => {
       const findManyArg = mockPrisma.user.findMany.mock.calls[0][0];
       expect(findManyArg.select).not.toHaveProperty('passwordHash');
       expect(findManyArg.select).not.toHaveProperty('hashedRefreshToken');
-      expect(findManyArg.where.AND).toBeDefined();
+      expect(findManyArg.where.AND).toContainEqual({ role: 'USER' });
+    });
+
+    it('should scope getUserStats strictly to USER role', async () => {
+      mockPrisma.user.count.mockResolvedValue(5);
+
+      await service.getUserStats();
+      for (const call of mockPrisma.user.count.mock.calls) {
+        const where = call[0]?.where;
+        expect(
+          where?.role === 'USER' ||
+            (Array.isArray(where?.AND) && where.AND.some((c: any) => c.role === 'USER')),
+        ).toBe(true);
+      }
     });
   });
 
@@ -113,7 +126,9 @@ describe('RmService', () => {
         mutualMatches: 1,
         feedbackCount: 3,
       });
-      const detailSelect = mockPrisma.user.findFirst.mock.calls[0][0].select;
+      const detailQuery = mockPrisma.user.findFirst.mock.calls[0][0];
+      expect(detailQuery.where.role).toBe('USER');
+      const detailSelect = detailQuery.select;
       expect(detailSelect.profile.select).not.toHaveProperty('permanentAddress');
       expect(detailSelect).not.toHaveProperty('passwordHash');
     });
