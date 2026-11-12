@@ -42,6 +42,9 @@ describe('ConnectionsService', () => {
       findMany: jest.fn(),
       count: jest.fn(),
     },
+    message: {
+      findMany: jest.fn(),
+    },
   };
 
   const mockNotifications: any = {
@@ -245,6 +248,9 @@ describe('ConnectionsService', () => {
 
       mockPrisma.connection.findMany.mockResolvedValue(mockMatches);
       mockPrisma.connection.count.mockResolvedValue(2);
+      mockPrisma.message.findMany.mockResolvedValue([
+        { senderId: 'user-me', receiverId: 'user-partner-1' },
+      ]);
 
       const result = await service.getConnections('user-me', 'matches');
       expect(result.data).toHaveLength(2);
@@ -252,10 +258,14 @@ describe('ConnectionsService', () => {
       expect(result.data[0].partner.id).toBe('user-partner-1');
       expect(result.data[0].partner.firstName).toBe('Priya');
       expect(result.data[0].isMutualMatch).toBe(true);
+      expect(result.data[0].hasChat).toBe(true);
+      expect(result.data[0].partner.hasChat).toBe(true);
 
       expect(result.data[1].partner.id).toBe('user-partner-2');
       expect(result.data[1].partner.firstName).toBe('Aarav');
       expect(result.data[1].isMutualMatch).toBe(true);
+      expect(result.data[1].hasChat).toBe(false);
+      expect(result.data[1].partner.hasChat).toBe(false);
     });
 
     it('should retrieve shortlisted profiles with partner mapping', async () => {

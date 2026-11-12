@@ -779,13 +779,42 @@ export class ConnectionsService {
             }),
           ),
         ]);
+        const partnerIds = matches
+          .map((m: any) => (m.senderId === userId ? m.receiverId : m.senderId))
+          .filter(Boolean);
+
+        const chatPartnerIds = new Set<string>();
+        if (partnerIds.length > 0 && this.prisma.message?.findMany) {
+          try {
+            const existingMessages = await this.prisma.message.findMany({
+              where: {
+                OR: [
+                  { senderId: userId, receiverId: { in: partnerIds } },
+                  { senderId: { in: partnerIds }, receiverId: userId },
+                ],
+              },
+              select: { senderId: true, receiverId: true },
+              distinct: ['senderId', 'receiverId'],
+            });
+            for (const msg of existingMessages) {
+              const otherId = msg.senderId === userId ? msg.receiverId : msg.senderId;
+              chatPartnerIds.add(otherId);
+            }
+          } catch {
+            // Non-fatal fallback: default hasChat to false if message lookup fails
+          }
+        }
+
         connections = matches.map((m: any) => {
           const isSender = m.senderId === userId;
           const partner = isSender ? m.receiver : m.sender;
+          const partnerId = partner?.id || (isSender ? m.receiverId : m.senderId);
+          const hasChat = Boolean(partnerId && chatPartnerIds.has(partnerId));
           return {
             ...m,
             partner,
             isMutualMatch: true,
+            hasChat,
           };
         });
         total = count;
@@ -851,6 +880,9 @@ export class ConnectionsService {
           partner.lastActiveAt = lastActiveIso;
           (conn as any).isOnline = isOnline;
           (conn as any).lastActiveAt = lastActiveIso;
+          if (typeof (conn as any).hasChat === 'boolean') {
+            partner.hasChat = (conn as any).hasChat;
+          }
 
           delete partner.isBanned;
           delete partner.deletedAt;
