@@ -65,6 +65,16 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         CREATE UNIQUE INDEX IF NOT EXISTS "MessageReaction_messageId_userId_key" ON "MessageReaction"("messageId", "userId");
         CREATE INDEX IF NOT EXISTS "MessageReaction_messageId_idx" ON "MessageReaction"("messageId");
         CREATE INDEX IF NOT EXISTS "MessageReaction_userId_idx" ON "MessageReaction"("userId");
+        CREATE TABLE IF NOT EXISTS "ProfileVisit" (
+            "id" TEXT NOT NULL,
+            "visitorId" TEXT NOT NULL,
+            "viewedUserId" TEXT NOT NULL,
+            "visitedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT "ProfileVisit_pkey" PRIMARY KEY ("id")
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS "ProfileVisit_visitorId_viewedUserId_key" ON "ProfileVisit"("visitorId", "viewedUserId");
+        CREATE INDEX IF NOT EXISTS "ProfileVisit_viewedUserId_visitedAt_idx" ON "ProfileVisit"("viewedUserId", "visitedAt" DESC);
+        CREATE INDEX IF NOT EXISTS "ProfileVisit_visitorId_idx" ON "ProfileVisit"("visitorId");
       `);
       this.logger.log('Core tables checked and ensured.');
     } catch (e: any) {

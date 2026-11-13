@@ -33,6 +33,15 @@ export class ProfilesController {
     return this.profilesService.getProfile(user.sub);
   }
 
+  @Get('me/visitors')
+  async getMyRecentVisitors(
+    @CurrentUser() user: any,
+    @Query('limit') limit?: string,
+  ) {
+    const parsedLimit = limit ? Math.min(Math.max(parseInt(limit, 10), 1), 50) : 20;
+    return this.profilesService.getRecentVisitors(user.sub, parsedLimit);
+  }
+
   @Post('me/deactivate')
   async deactivateMyAccount(
     @CurrentUser() user: any,
@@ -64,6 +73,15 @@ export class ProfilesController {
     return this.profilesService.getPublicProfile(id, viewerId, {
       excludeSelf: excludeSelf === 'true' || excludeSelf === '1',
     });
+  }
+
+  @Post(':id/visit')
+  async recordVisit(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+  ) {
+    const viewerId = user?.sub || user?.id;
+    return this.profilesService.recordProfileVisit(viewerId, id);
   }
 
   @Put('me')
