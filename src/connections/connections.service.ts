@@ -52,6 +52,43 @@ export class ConnectionsService {
     };
   }
 
+  private async getSenderNotificationDetails(senderId: string): Promise<{ name: string; category: string }> {
+    try {
+      const sender = await this.prisma.user.findUnique({
+        where: { id: senderId },
+        select: {
+          firstName: true,
+          lastName: true,
+          profile: {
+            select: {
+              firstName: true,
+              lastName: true,
+              category: true,
+              profileFor: true,
+            },
+          },
+        },
+      });
+
+      const name =
+        `${sender?.profile?.firstName || sender?.firstName || ''} ${
+          sender?.profile?.lastName || sender?.lastName || ''
+        }`.trim() || 'Someone';
+
+      const rawCat = (sender?.profile?.category || sender?.profile?.profileFor || 'Marriage').toLowerCase().trim();
+      let category = 'Marriage';
+      if (rawCat.includes('friend')) {
+        category = 'Friendship';
+      } else if (rawCat.includes('live') || rawCat.includes('living')) {
+        category = 'Live-In';
+      }
+
+      return { name, category };
+    } catch {
+      return { name: 'Someone', category: 'Marriage' };
+    }
+  }
+
   async sendInterest(senderId: string, rawReceiverId: string) {
     const receiverId = await this.resolveUserId(rawReceiverId);
     if (senderId === receiverId) {
@@ -174,10 +211,11 @@ export class ConnectionsService {
         },
       });
 
+      const senderDetails = await this.getSenderNotificationDetails(senderId);
       await this.notificationsService.createNotification(
         receiverId,
         'NEW_INTEREST',
-        'Someone sent you an interest!',
+        `${senderDetails.name} sent you a ${senderDetails.category} interest`,
         senderId,
       );
 
@@ -207,10 +245,11 @@ export class ConnectionsService {
       },
     });
 
+    const senderDetails = await this.getSenderNotificationDetails(senderId);
     await this.notificationsService.createNotification(
       receiverId,
       'NEW_INTEREST',
-      'Someone sent you an interest!',
+      `${senderDetails.name} sent you a ${senderDetails.category} interest`,
       senderId,
     );
 

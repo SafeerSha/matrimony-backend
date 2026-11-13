@@ -291,6 +291,10 @@ export class NotificationsService {
                   occupation: true,
                   firstName: true,
                   lastName: true,
+                  category: true,
+                  profileFor: true,
+                  state: true,
+                  motherTongue: true,
                 },
               },
               photos: {
@@ -311,6 +315,15 @@ export class NotificationsService {
           `${s.profile?.firstName || s.firstName || ''} ${
             s.profile?.lastName || s.lastName || ''
           }`.trim() || 'Member';
+
+        const rawCat = (s.profile?.category || s.profile?.profileFor || 'Marriage').toLowerCase().trim();
+        let category = 'Marriage';
+        if (rawCat.includes('friend')) {
+          category = 'Friendship';
+        } else if (rawCat.includes('live') || rawCat.includes('living')) {
+          category = 'Live-In';
+        }
+
         return [
           s.id,
           {
@@ -319,6 +332,10 @@ export class NotificationsService {
             avatarUrl: photo,
             city: s.profile?.city || null,
             occupation: s.profile?.occupation || null,
+            category,
+            profileFor: s.profile?.profileFor || null,
+            state: s.profile?.state || null,
+            motherTongue: s.profile?.motherTongue || null,
           },
         ];
       })
@@ -343,6 +360,13 @@ export class NotificationsService {
       // If legacy content was "You have a new message!", replace with sender name
       if (content === 'You have a new message!' && sender) {
         content = `${sender.name}: Sent you a message`;
+      }
+      // If interest notification, enrich content with sender name and category if it was generic
+      if ((notif.type === 'NEW_INTEREST' || notif.type === 'INTEREST_RECEIVED') && sender) {
+        const cat = sender.category || 'Marriage';
+        if (content === 'Someone sent you an interest!' || !content) {
+          content = `${sender.name} sent you a ${cat} interest`;
+        }
       }
       return {
         ...notif,
