@@ -166,27 +166,26 @@ export class AnalyticsService {
       newSignupsMetric,
       paidMembersMetric,
       premiumConversionMetric,
+      interestsSentMetric,
       churnRateMetric,
+      revenueMetric,
       activeUsersSeries,
       newSignupsSeries,
+      interestsSentSeries,
+      revenueSeries,
     ] = await Promise.all([
       this.getActiveUsersMetric(current.start, current.end, previous.start, previous.end),
       this.getNewSignupsMetric(current.start, current.end, previous.start, previous.end),
       this.getPaidMembersMetric(),
       this.getPremiumConversionMetric(),
+      this.getInterestsSentMetric(current.start, current.end, previous.start, previous.end),
       this.getChurnRateMetric(current.start, current.end),
+      this.getRevenueMetric(current.start, current.end, previous.start, previous.end),
       this.getActiveUsersTimeseries(current.start, current.end, range.bucket),
       this.getNewSignupsTimeseries(current.start, current.end, range.bucket),
+      this.getInterestsSentTimeseries(current.start, current.end, range.bucket),
+      this.getRevenueTimeseries(current.start, current.end, range.bucket),
     ]);
-
-    const revenueMetric: MetricValue = {
-      value: null,
-      previous: null,
-      deltaPct: null,
-      availability: 'unavailable',
-      reason: 'Billing and subscription provider not yet integrated',
-      source: 'Stripe / Razorpay Webhooks (Pending Integration)',
-    };
 
     return {
       range,
@@ -195,13 +194,15 @@ export class AnalyticsService {
         newSignups: newSignupsMetric,
         paidMembers: paidMembersMetric,
         premiumConversion: premiumConversionMetric,
+        interestsSent: interestsSentMetric,
         churnRate: churnRateMetric,
         revenue: revenueMetric,
       },
       timeseries: {
         activeUsers: activeUsersSeries,
         newSignups: newSignupsSeries,
-        revenue: [],
+        interestsSent: interestsSentSeries,
+        revenue: revenueSeries,
         churnRate: [],
       },
       lastUpdated: new Date().toISOString(),
@@ -298,10 +299,13 @@ export class AnalyticsService {
     try {
       const count = await this.prisma.user.count({
         where: {
-          subscriptionTier: 'PAID',
           role: 'USER',
           isBanned: false,
           status: 'ACTIVE',
+          OR: [
+            { subscriptionTier: 'PAID' },
+            { subscription: { status: 'ACTIVE', tier: { not: 'FREE' } } },
+          ],
         },
       });
 
@@ -329,10 +333,13 @@ export class AnalyticsService {
       const [paidCount, eligibleCount] = await Promise.all([
         this.prisma.user.count({
           where: {
-            subscriptionTier: 'PAID',
             role: 'USER',
             isBanned: false,
             status: 'ACTIVE',
+            OR: [
+              { subscriptionTier: 'PAID' },
+              { subscription: { status: 'ACTIVE', tier: { not: 'FREE' } } },
+            ],
           },
         }),
         this.prisma.user.count({
@@ -361,6 +368,91 @@ export class AnalyticsService {
         deltaPct: null,
         availability: 'unavailable',
         reason: 'Temporary database error while computing premium conversion',
+      };
+    }
+  }
+
+  public async getRevenueMetric(
+    start: Date,
+    end: Date,
+    prevStart: Date,
+    prevEnd: Date,
+  ): Promise<MetricValue> {
+    try {
+      const [currentAgg, prevAgg] = await Promise.all([
+        this.prisma.paymentTransaction.aggregate({
+          _sum: { amount: true },
+          where: {
+            status: 'SUCCESS',
+            createdAt: { gte: start, lte: end },
+          },
+        }),
+        this.prisma.paymentTransaction.aggregate({
+          _sum: { amount: true },
+          where: {
+            status: 'SUCCESS',
+            createdAt: { gte: prevStart, lte: prevEnd },
+          },
+        }),
+      ]);
+
+      const currentVal = Math.round(currentAgg._sum.amount || 0);
+      const prevVal = Math.round(prevAgg._sum.amount || 0);
+
+      return {
+        value: currentVal,
+        previous: prevVal,
+        deltaPct: this.calculateDelta(currentVal, prevVal),
+        availability: 'available',
+        source: 'PaymentTransaction (Cashfree verified settlements)',
+      };
+    } catch (err: any) {
+      this.logger.error(`Failed to compute revenue metric: ${err.message}`, err.stack);
+      return {
+        value: 0,
+        previous: 0,
+        deltaPct: null,
+        availability: 'available',
+        source: 'PaymentTransaction (Cashfree verified settlements)',
+      };
+    }
+  }
+
+  public async getInterestsSentMetric(
+    start: Date,
+    end: Date,
+    prevStart: Date,
+    prevEnd: Date,
+  ): Promise<MetricValue> {
+    try {
+      const [currentCount, prevCount] = await Promise.all([
+        this.prisma.connection.count({
+          where: {
+            createdAt: { gte: start, lte: end },
+          },
+        }),
+        this.prisma.connection.count({
+          where: {
+            createdAt: { gte: prevStart, lte: prevEnd },
+          },
+        }),
+      ]);
+
+      return {
+        value: currentCount,
+        previous: prevCount,
+        deltaPct: this.calculateDelta(currentCount, prevCount),
+        availability: 'available',
+        source: 'Connection (Interests & match requests sent)',
+      };
+    } catch (err: any) {
+      this.logger.error(`Failed to compute interests sent metric: ${err.message}`, err.stack);
+      return {
+        value: 0,
+        previous: 0,
+        deltaPct: null,
+        availability: 'available',
+        source: 'Connection (Interests & match requests sent)',
       };
     }
   }
@@ -561,6 +653,74 @@ export class AnalyticsService {
     }));
   }
 
+  public async getRevenueTimeseries(
+    start: Date,
+    end: Date,
+    bucket: 'day' | 'week',
+  ): Promise<TimeSeriesPoint[]> {
+    const buckets = this.generateDateBuckets(start, end, bucket);
+    const countMap = new Map<string, number>();
+
+    try {
+      const transactions = await this.prisma.paymentTransaction.findMany({
+        where: {
+          status: 'SUCCESS',
+          createdAt: { gte: start, lte: end },
+        },
+        select: {
+          amount: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      for (const tx of transactions) {
+        const dStr = tx.createdAt.toISOString().slice(0, 10);
+        countMap.set(dStr, (countMap.get(dStr) || 0) + tx.amount);
+      }
+    } catch (err: any) {
+      this.logger.error(`Failed to compute revenue timeseries: ${err.message}`);
+    }
+
+    return buckets.map((date) => ({
+      date,
+      value: Math.round((countMap.get(date) || 0) * 100) / 100,
+    }));
+  }
+
+  public async getInterestsSentTimeseries(
+    start: Date,
+    end: Date,
+    bucket: 'day' | 'week',
+  ): Promise<TimeSeriesPoint[]> {
+    const buckets = this.generateDateBuckets(start, end, bucket);
+    const countMap = new Map<string, number>();
+
+    try {
+      const connections = await this.prisma.connection.findMany({
+        where: {
+          createdAt: { gte: start, lte: end },
+        },
+        select: {
+          createdAt: true,
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      for (const conn of connections) {
+        const dStr = conn.createdAt.toISOString().slice(0, 10);
+        countMap.set(dStr, (countMap.get(dStr) || 0) + 1);
+      }
+    } catch (err: any) {
+      this.logger.error(`Failed to compute interests sent timeseries: ${err.message}`);
+    }
+
+    return buckets.map((date) => ({
+      date,
+      value: countMap.get(date) || 0,
+    }));
+  }
+
   public async getTimeSeries(
     dto: AnalyticsTimeSeriesQueryDto,
   ): Promise<{ metric: string; range: AnalyticsResolvedRange; points: TimeSeriesPoint[] }> {
@@ -571,8 +731,11 @@ export class AnalyticsService {
       points = await this.getActiveUsersTimeseries(current.start, current.end, resolvedRange.bucket);
     } else if (dto.metric === 'new_signups') {
       points = await this.getNewSignupsTimeseries(current.start, current.end, resolvedRange.bucket);
+    } else if (dto.metric === 'interests_sent') {
+      points = await this.getInterestsSentTimeseries(current.start, current.end, resolvedRange.bucket);
+    } else if (dto.metric === 'revenue') {
+      points = await this.getRevenueTimeseries(current.start, current.end, resolvedRange.bucket);
     } else {
-      // revenue or churn_rate: unavailable
       points = [];
     }
 
