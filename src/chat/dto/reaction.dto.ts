@@ -7,3 +7,4 @@ export class ReactMessageDto {
   @MaxLength(16, { message: 'Emoji is too long' })
   emoji!: string;
 }
+
