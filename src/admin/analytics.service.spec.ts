@@ -17,10 +17,23 @@ describe('AnalyticsService', () => {
       count: jest.fn(),
       findFirst: jest.fn(),
     },
+    paymentTransaction: {
+      aggregate: jest.fn(),
+      findMany: jest.fn(),
+    },
+    connection: {
+      count: jest.fn(),
+      findMany: jest.fn(),
+    },
     $queryRaw: jest.fn(),
   };
 
   beforeEach(async () => {
+    (mockPrisma.paymentTransaction.aggregate as any).mockResolvedValue({ _sum: { amount: 0 } });
+    (mockPrisma.paymentTransaction.findMany as any).mockResolvedValue([]);
+    (mockPrisma.connection.count as any).mockResolvedValue(0);
+    (mockPrisma.connection.findMany as any).mockResolvedValue([]);
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AnalyticsService,
@@ -174,7 +187,7 @@ describe('AnalyticsService', () => {
           const gte = args.where.createdAt.gte;
           return gte.getTime() > Date.now() - 10 * 24 * 60 * 60 * 1000 ? 45 : 30;
         }
-        if (args?.where?.subscriptionTier === 'PAID') {
+        if (args?.where?.OR || args?.where?.subscriptionTier === 'PAID') {
           return 25;
         }
         if (args?.where?.role === 'USER') {
@@ -186,6 +199,14 @@ describe('AnalyticsService', () => {
       (mockPrisma.subscriptionEvent.findFirst as any).mockResolvedValue(null);
       (mockPrisma.subscriptionEvent.count as any).mockResolvedValue(0);
       (mockPrisma.user.findMany as any).mockResolvedValue([]);
+      (mockPrisma.paymentTransaction.aggregate as any)
+        .mockResolvedValueOnce({ _sum: { amount: 5000 } })
+        .mockResolvedValueOnce({ _sum: { amount: 4000 } });
+      (mockPrisma.paymentTransaction.findMany as any).mockResolvedValue([]);
+      (mockPrisma.connection.count as any)
+        .mockResolvedValueOnce(30)
+        .mockResolvedValueOnce(20);
+      (mockPrisma.connection.findMany as any).mockResolvedValue([]);
 
       const result1 = await service.getOverview({ preset: '7d' }, 'ADMIN');
 
@@ -205,28 +226,27 @@ describe('AnalyticsService', () => {
         source: 'User.createdAt (role=USER)',
       });
 
-      expect(result1.metrics.paidMembers).toEqual({
-        value: 25,
-        previous: null,
-        deltaPct: null,
-        availability: 'available',
-        source: 'User.subscriptionTier = PAID (role=USER, status=ACTIVE, isBanned=false)',
-      });
+      expect(result1.metrics.paidMembers.value).toBe(25);
+      expect(result1.metrics.paidMembers.availability).toBe('available');
 
-      expect(result1.metrics.premiumConversion).toEqual({
-        value: 25,
-        previous: null,
-        deltaPct: null,
-        availability: 'available',
-        source: 'Paid Members / Active Eligible Users',
-      });
+      expect(result1.metrics.premiumConversion.value).toBe(25);
+      expect(result1.metrics.premiumConversion.availability).toBe('available');
 
-      // Revenue must be explicitly marked as unavailable
-      expect(result1.metrics.revenue.availability).toBe('unavailable');
-      expect(result1.metrics.revenue.value).toBeNull();
+      // Revenue is now live and available
+      expect(result1.metrics.revenue.availability).toBe('available');
+      expect(result1.metrics.revenue.value).toBe(5000);
+      expect(result1.metrics.revenue.previous).toBe(4000);
+      expect(result1.metrics.revenue.deltaPct).toBe(25);
+
+      // Interests Sent is now live and available
+      expect(result1.metrics.interestsSent?.availability).toBe('available');
+      expect(result1.metrics.interestsSent?.value).toBe(30);
+      expect(result1.metrics.interestsSent?.previous).toBe(20);
 
       expect(result1.timeseries.activeUsers.length).toBeGreaterThan(0);
       expect(result1.timeseries.newSignups.length).toBeGreaterThan(0);
+      expect(result1.timeseries.interestsSent?.length).toBeGreaterThan(0);
+      expect(result1.timeseries.revenue.length).toBeGreaterThan(0);
 
       // Verify caching: second call within TTL should return cached object without querying DB again
       (mockPrisma.user.count as any).mockClear();

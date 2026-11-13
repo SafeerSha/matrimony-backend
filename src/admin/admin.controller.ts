@@ -7,7 +7,16 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { AnalyticsQueryDto, AnalyticsTimeSeriesQueryDto } from './dto/analytics-query.dto';
-import { AdminUserQueryDto, CreateAdminUserDto, UpdateStatusBodyDto, UpdateTierBodyDto, VerifyPhotoBodyDto, AssignPlanBodyDto } from './dto/user-query.dto';
+import {
+  AdminUserQueryDto,
+  CreateAdminUserDto,
+  UpdateStatusBodyDto,
+  UpdateTierBodyDto,
+  VerifyPhotoBodyDto,
+  AssignPlanBodyDto,
+  AdminResetPasswordDto,
+  AdminUpdateUserDto,
+} from './dto/user-query.dto';
 import { CreatePlanDto, UpdatePlanDto } from './dto/plan.dto';
 import { SubscriptionService } from '../subscription/subscription.service';
 import { ApiOperation } from '@nestjs/swagger';
@@ -66,8 +75,33 @@ export class AdminController {
   }
 
   @Post('users/:id/purge')
+  @ApiOperation({ summary: 'Purge / permanently delete a user account' })
   async purgeUser(@Param('id') userId: string) {
     return this.adminService.purgeUser(userId);
+  }
+
+  @Delete('users/:id')
+  @ApiOperation({ summary: 'Permanently delete a user or Relationship Manager account' })
+  async deleteUser(@Param('id') userId: string) {
+    return this.adminService.purgeUser(userId);
+  }
+
+  @Post('users/:id/reset-password')
+  @ApiOperation({ summary: 'Reset password for a user or Relationship Manager' })
+  async resetUserPassword(
+    @Param('id') userId: string,
+    @Body() body: AdminResetPasswordDto,
+  ) {
+    return this.adminService.resetUserPassword(userId, body.password);
+  }
+
+  @Patch('users/:id')
+  @ApiOperation({ summary: 'Update user or Relationship Manager profile details' })
+  async updateUser(
+    @Param('id') userId: string,
+    @Body() body: AdminUpdateUserDto,
+  ) {
+    return this.adminService.updateUser(userId, body);
   }
 
   @Post('users/:id/ban')

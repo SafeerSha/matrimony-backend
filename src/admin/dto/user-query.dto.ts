@@ -112,3 +112,32 @@ export class CreateAdminUserDto {
   @MaxLength(20)
   phone?: string;
 }
+
+export class AdminResetPasswordDto {
+  @IsString()
+  @MinLength(8, { message: 'Password must be at least 8 characters long' })
+  @MaxLength(128)
+  password!: string;
+}
+
+export class AdminUpdateUserDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  firstName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  lastName?: string;
+
+  @IsOptional()
+  @IsEmail({}, { message: 'Must be a valid email address' })
+  @MaxLength(255)
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  phone?: string;
+}

@@ -24,6 +24,7 @@ describe('AdminService', () => {
       findMany: jest.fn<any>(),
       count: jest.fn<any>(),
       findUnique: jest.fn<any>(),
+      findFirst: jest.fn<any>(),
       create: jest.fn<any>(),
       update: jest.fn<any>(),
       delete: jest.fn<any>(),
@@ -311,6 +312,7 @@ describe('AdminService', () => {
       mockPrisma.user.findUnique.mockResolvedValue({
         id: 'u1',
         email: 'u1@test.com',
+        role: 'USER',
         photos: [{ id: 'ph1', url: 'https://test.com/ph1.jpg', objectKey: 'ph1', storageProvider: 'local' }],
       });
       mockPrisma.user.delete.mockResolvedValue({ id: 'u1' });
@@ -323,6 +325,17 @@ describe('AdminService', () => {
         storageProvider: 'local',
       });
       expect(mockPrisma.user.delete).toHaveBeenCalledWith({ where: { id: 'u1' } });
+    });
+
+    it('should disallow purging an ADMIN account', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({
+        id: 'admin1',
+        email: 'admin@test.com',
+        role: 'ADMIN',
+        photos: [],
+      });
+
+      await expect(service.purgeUser('admin1')).rejects.toThrow('Cannot delete an administrator account.');
     });
   });
 
@@ -427,6 +440,97 @@ describe('AdminService', () => {
       await service.getUsers({ role: 'ALL', page: 1, limit: 15 });
       const allCallWhere = mockPrisma.user.findMany.mock.calls[0][0].where;
       expect(allCallWhere).not.toHaveProperty('role');
+    });
+  });
+
+  describe('resetUserPassword', () => {
+    it('should reset password, enable password and revoke existing refresh tokens', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ id: 'rm-1', role: 'RM', email: 'rm@test.com' });
+      mockPrisma.user.update.mockResolvedValue({ id: 'rm-1' });
+
+      const res = await service.resetUserPassword('rm-1', 'NewPassword123!');
+      expect(res.success).toBe(true);
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'rm-1' },
+        data: expect.objectContaining({
+          isPasswordEnabled: true,
+          hashedRefreshToken: null,
+          passwordHash: expect.any(String),
+        }),
+      });
+    });
+
+    it('should throw NotFoundException if user does not exist', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(null);
+      await expect(service.resetUserPassword('non-existent', 'Password123!')).rejects.toThrow('User not found');
+    });
+
+    it('should throw BadRequestException if password is too short', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ id: 'rm-1', role: 'RM', email: 'rm@test.com' });
+      await expect(service.resetUserPassword('rm-1', 'short')).rejects.toThrow('Password must be at least 8 characters long');
+    });
+  });
+
+  describe('updateUser', () => {
+    it('should update RM user firstName, lastName, email, phone', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({
+        id: 'rm-1',
+        email: 'old@test.com',
+        phone: '+919999999999',
+        firstName: 'OldFirst',
+        lastName: 'OldLast',
+        role: 'RM',
+        profile: null,
+      });
+      mockPrisma.user.findFirst.mockResolvedValue(null);
+      mockPrisma.user.update.mockResolvedValue({
+        id: 'rm-1',
+        email: 'new@test.com',
+        phone: '+918888888888',
+        firstName: 'NewFirst',
+        lastName: 'NewLast',
+        role: 'RM',
+        status: 'ACTIVE',
+        isBanned: false,
+        profileId: 'IMC-RM01',
+      });
+
+      const res = await service.updateUser('rm-1', {
+        firstName: 'NewFirst',
+        lastName: 'NewLast',
+        email: 'new@test.com',
+        phone: '9888888888',
+      });
+
+      expect(res.success).toBe(true);
+      expect(res.user.firstName).toBe('NewFirst');
+      expect(mockPrisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'rm-1' },
+          data: expect.objectContaining({
+            email: 'new@test.com',
+            firstName: 'NewFirst',
+            lastName: 'NewLast',
+          }),
+        }),
+      );
+    });
+
+    it('should throw ConflictException if updated email belongs to someone else', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({
+        id: 'rm-1',
+        email: 'rm@test.com',
+        phone: '+919999999999',
+        firstName: 'First',
+        lastName: 'Last',
+        role: 'RM',
+        profile: null,
+      });
+      mockPrisma.user.findFirst.mockResolvedValue({ id: 'other-user', email: 'taken@test.com' });
+
+      await expect(
+        service.updateUser('rm-1', { email: 'taken@test.com' }),
+      ).rejects.toThrow('An account with this email already exists.');
     });
   });
 });

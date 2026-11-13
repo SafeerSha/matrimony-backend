@@ -21,8 +21,8 @@ export class AnalyticsQueryDto {
 }
 
 export class AnalyticsTimeSeriesQueryDto extends AnalyticsQueryDto {
-  @IsIn(['active_users', 'new_signups', 'revenue', 'churn_rate'], {
-    message: 'Metric must be one of: active_users, new_signups, revenue, churn_rate',
+  @IsIn(['active_users', 'new_signups', 'interests_sent', 'revenue', 'churn_rate'], {
+    message: 'Metric must be one of: active_users, new_signups, interests_sent, revenue, churn_rate',
   })
-  metric!: 'active_users' | 'new_signups' | 'revenue' | 'churn_rate';
+  metric!: 'active_users' | 'new_signups' | 'interests_sent' | 'revenue' | 'churn_rate';
 }
