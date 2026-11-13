@@ -30,6 +30,18 @@ import { normalizePhoneNumber } from '../common/utils/phone.util';
 import { splitFullName } from '../common/utils/name.util';
 import { parseUserAgentAndHeaders, ParsedDeviceInfo } from '../common/utils/device-parser.util';
 
+const AUTH_PROFILE_SELECT = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  gender: true,
+  profileFor: true,
+  category: true,
+  lookingIn: true,
+  community: true,
+  onboardingStep: true,
+} as const;
+
 @Injectable()
 export class AuthService implements OnModuleDestroy {
   private readonly logger = new Logger(AuthService.name);
@@ -283,7 +295,9 @@ export class AuthService implements OnModuleDestroy {
         OR: orConditions,
       },
       include: {
-        profile: true,
+        profile: {
+          select: AUTH_PROFILE_SELECT,
+        },
       },
     }) : null;
 
@@ -711,7 +725,11 @@ export class AuthService implements OnModuleDestroy {
 
     let user = await this.prisma.user.findFirst({
       where: userWhere,
-      include: { profile: true },
+      include: {
+        profile: {
+          select: AUTH_PROFILE_SELECT,
+        },
+      },
     });
 
     if (user) {
@@ -739,7 +757,11 @@ export class AuthService implements OnModuleDestroy {
               }
             : {}),
         },
-        include: { profile: true },
+        include: {
+          profile: {
+            select: AUTH_PROFILE_SELECT,
+          },
+        },
       });
     } else {
       if (!allowCreate) {

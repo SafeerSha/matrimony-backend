@@ -31,6 +31,24 @@ export interface PaginatedChatHistory {
   meta: ChatHistoryMeta;
 }
 
+const CHAT_PROFILE_SELECT = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  gender: true,
+  dateOfBirth: true,
+  city: true,
+  state: true,
+  category: true,
+  profileFor: true,
+  occupation: true,
+  employmentStatus: true,
+  education: true,
+  religion: true,
+  caste: true,
+  maritalStatus: true,
+} as const;
+
 @Injectable()
 export class ChatService {
   constructor(
@@ -63,7 +81,9 @@ export class ChatService {
               deletedAt: true,
               deactivatedAt: true,
               lastActiveAt: true,
-              profile: true,
+              profile: {
+                select: CHAT_PROFILE_SELECT,
+              },
               photos: {
                 select: {
                   id: true,
@@ -86,7 +106,9 @@ export class ChatService {
               deletedAt: true,
               deactivatedAt: true,
               lastActiveAt: true,
-              profile: true,
+              profile: {
+                select: CHAT_PROFILE_SELECT,
+              },
               photos: {
                 select: {
                   id: true,
@@ -102,7 +124,19 @@ export class ChatService {
       }),
       this.prisma.user.findUnique({
         where: { id: userId },
-        include: { profile: true, preference: true },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          status: true,
+          preference: true,
+          profile: {
+            select: {
+              ...CHAT_PROFILE_SELECT,
+              preferences: true,
+            },
+          },
+        },
       }),
       this.prisma.blockedUser
         ? this.prisma.blockedUser.findMany({
@@ -583,8 +617,16 @@ export class ChatService {
 
     const sender = await this.prisma.user.findUnique({
       where: { id: senderId },
-      include: {
-        profile: true,
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        profile: {
+          select: {
+            firstName: true,
+            lastName: true,
+          },
+        },
       },
     });
 
@@ -658,7 +700,13 @@ export class ChatService {
             id: true,
             firstName: true,
             lastName: true,
-            profile: true,
+            profile: {
+              select: {
+                bio: true,
+                city: true,
+                occupation: true,
+              },
+            },
             photos: { select: { url: true, isPrimary: true, isVerified: true } },
           },
         },
@@ -667,7 +715,13 @@ export class ChatService {
             id: true,
             firstName: true,
             lastName: true,
-            profile: true,
+            profile: {
+              select: {
+                bio: true,
+                city: true,
+                occupation: true,
+              },
+            },
             photos: { select: { url: true, isPrimary: true, isVerified: true } },
           },
         },
