@@ -246,6 +246,8 @@ export class ChatService {
           image: partnerPhoto,
           city: partner.profile?.city || null,
           occupation: partner.profile?.occupation || null,
+          category: partner.profile?.category || null,
+          profileFor: partner.profile?.profileFor || null,
           isVerified,
           online: isOnline,
           isOnline,
