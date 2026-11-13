@@ -120,7 +120,19 @@ export class PaymentService {
     // 2. Fetch User & Profile details
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      include: { profile: true },
+      select: {
+        id: true,
+        email: true,
+        phone: true,
+        firstName: true,
+        lastName: true,
+        profile: {
+          select: {
+            firstName: true,
+            lastName: true,
+          },
+        },
+      },
     });
 
     if (!user) {
