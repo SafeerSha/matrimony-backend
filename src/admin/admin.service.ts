@@ -16,7 +16,7 @@ import { ChatGateway } from '../chat/chat.gateway';
 import { UsersService } from '../users/users.service';
 import { normalizePhoneNumber } from '../common/utils/phone.util';
 import { sanitizeText } from '../common/utils/sanitize.util';
-import type { AdminUserQueryDto, AssignPlanBodyDto, CreateAdminUserDto } from './dto/user-query.dto';
+import type { AdminUserQueryDto, AssignPlanBodyDto, CreateAdminUserDto, AdminResetPasswordDto, AdminUpdateUserDto } from './dto/user-query.dto';
 
 /** Shared select for admin user list — never expose credential fields */
 const USER_LIST_SELECT = {
@@ -351,6 +351,7 @@ export class AdminService {
       select: {
         id: true,
         email: true,
+        role: true,
         photos: {
           select: { id: true, url: true, objectKey: true, storageProvider: true },
         },
@@ -358,6 +359,10 @@ export class AdminService {
     });
     if (!user) {
       throw new NotFoundException('User not found');
+    }
+
+    if (user.role === 'ADMIN') {
+      throw new BadRequestException('Cannot delete an administrator account.');
     }
 
     // Clean up physical photos from storage
@@ -379,6 +384,130 @@ export class AdminService {
     return {
       success: true,
       message: `User ${userId} and all related records have been permanently purged.`,
+    };
+  }
+
+  async resetUserPassword(userId: string, newPassword: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true, email: true },
+    });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (newPassword.length < 8) {
+      throw new BadRequestException('Password must be at least 8 characters long');
+    }
+
+    const passwordHash = await argon2.hash(newPassword);
+    const now = new Date();
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        passwordHash,
+        isPasswordEnabled: true,
+        passwordChangedAt: now,
+        hashedRefreshToken: null, // Revoke all existing active sessions
+      },
+    });
+
+    return {
+      success: true,
+      message: 'User password has been reset successfully.',
+    };
+  }
+
+  async updateUser(userId: string, dto: AdminUpdateUserDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        phone: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        profile: { select: { id: true } },
+      },
+    });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    let cleanEmail: string | undefined = undefined;
+    if (dto.email !== undefined) {
+      cleanEmail = dto.email.trim().toLowerCase();
+      if (!cleanEmail) {
+        throw new BadRequestException('Email cannot be empty');
+      }
+      if (cleanEmail !== user.email?.toLowerCase()) {
+        const existing = await this.prisma.user.findFirst({
+          where: { email: cleanEmail, NOT: { id: userId } },
+        });
+        if (existing) {
+          throw new ConflictException('An account with this email already exists.');
+        }
+      }
+    }
+
+    let cleanPhone: string | undefined = undefined;
+    if (dto.phone !== undefined) {
+      const trimmedPhone = dto.phone.trim();
+      cleanPhone = trimmedPhone ? normalizePhoneNumber(trimmedPhone) : undefined;
+      if (cleanPhone && cleanPhone !== user.phone) {
+        const existingPhone = await this.prisma.user.findFirst({
+          where: { phone: cleanPhone, NOT: { id: userId } },
+        });
+        if (existingPhone) {
+          throw new ConflictException('An account with this phone number already exists.');
+        }
+      }
+    }
+
+    const cleanFirst = dto.firstName !== undefined ? sanitizeText(dto.firstName.trim()) : undefined;
+    const cleanLast = dto.lastName !== undefined ? (dto.lastName.trim() ? sanitizeText(dto.lastName.trim()) : null) : undefined;
+
+    if (dto.firstName !== undefined && !cleanFirst) {
+      throw new BadRequestException('First name cannot be empty');
+    }
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(cleanEmail !== undefined ? { email: cleanEmail } : {}),
+        ...(dto.phone !== undefined ? { phone: cleanPhone ?? null } : {}),
+        ...(cleanFirst !== undefined ? { firstName: cleanFirst } : {}),
+        ...(cleanLast !== undefined ? { lastName: cleanLast } : {}),
+        ...(user.profile
+          ? {
+              profile: {
+                update: {
+                  ...(cleanFirst !== undefined ? { firstName: cleanFirst } : {}),
+                  ...(cleanLast !== undefined ? { lastName: cleanLast ?? '' } : {}),
+                },
+              },
+            }
+          : {}),
+      },
+      select: {
+        id: true,
+        email: true,
+        phone: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        status: true,
+        isBanned: true,
+        profileId: true,
+      },
+    });
+
+    return {
+      success: true,
+      message: 'User details updated successfully.',
+      user: updatedUser,
     };
   }
 
