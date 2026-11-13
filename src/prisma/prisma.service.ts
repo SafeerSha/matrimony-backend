@@ -50,6 +50,17 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         ALTER TABLE "Feedback" ADD COLUMN IF NOT EXISTS "reviewedAt" TIMESTAMP(3);
         CREATE INDEX IF NOT EXISTS "Feedback_status_idx" ON "Feedback"("status");
         CREATE INDEX IF NOT EXISTS "Feedback_priority_idx" ON "Feedback"("priority");
+        CREATE TABLE IF NOT EXISTS "MessageReaction" (
+            "id" TEXT NOT NULL,
+            "messageId" TEXT NOT NULL,
+            "userId" TEXT NOT NULL,
+            "emoji" TEXT NOT NULL,
+            "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT "MessageReaction_pkey" PRIMARY KEY ("id")
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS "MessageReaction_messageId_userId_key" ON "MessageReaction"("messageId", "userId");
+        CREATE INDEX IF NOT EXISTS "MessageReaction_messageId_idx" ON "MessageReaction"("messageId");
+        CREATE INDEX IF NOT EXISTS "MessageReaction_userId_idx" ON "MessageReaction"("userId");
       `);
       this.logger.log('Core tables checked and ensured.');
     } catch (e: any) {
