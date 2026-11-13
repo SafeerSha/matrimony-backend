@@ -135,6 +135,8 @@ export class OnboardingService {
         ...(dto.sistersCount !== undefined ? { sistersCount: Number(dto.sistersCount) } : {}),
         ...(dto.sistersMarried !== undefined ? { sistersMarried: Number(dto.sistersMarried) } : {}),
         ...(dto.familyDetails !== undefined ? { familyDetails: dto.familyDetails } : {}),
+        ...(dto.friendshipGoals ? { friendshipGoals: sanitizeText(dto.friendshipGoals, 255) } : {}),
+        ...(dto.genderPreference ? { genderPreference: sanitizeText(dto.genderPreference, 100) } : {}),
       };
 
       const updatedProfile = await tx.profile.upsert({
@@ -151,10 +153,13 @@ export class OnboardingService {
 
     // Fire welcome notification
     try {
+      const isFriendCat = String(updated.profile?.category || '').toLowerCase().includes('friend');
       await this.notificationsService.createNotification(
         userId,
         'SYSTEM',
-        'Welcome to IshtamChat! Your profile is now active and live. Start connecting with compatible partners today!',
+        isFriendCat
+          ? 'Welcome to IshtamChat! Your friendship profile is now active and live. Start discovering new connections today!'
+          : 'Welcome to IshtamChat! Your profile is now active and live. Start connecting with compatible partners today!',
       );
     } catch {
       // Safe failure: notification logging error should not block profile activation
