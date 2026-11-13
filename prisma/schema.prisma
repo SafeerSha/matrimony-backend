@@ -55,6 +55,8 @@ model User {
   reportsFiled        UserReport[]      @relation("ReportReporterRelations")
   reportsReceived     UserReport[]      @relation("ReportedRelations")
   messageReactions    MessageReaction[] @relation("UserMessageReactions")
+  profileVisitsMade     ProfileVisit[]    @relation("ProfileVisitsMade")
+  profileVisitsReceived ProfileVisit[]    @relation("ProfileVisitsReceived")
 
   @@index([createdAt])
   @@index([lastActiveAt])
@@ -420,4 +422,18 @@ model MessageReaction {
   @@unique([messageId, userId])
   @@index([messageId])
   @@index([userId])
+}
+
+model ProfileVisit {
+  id           String   @id @default(uuid())
+  visitorId    String
+  viewedUserId String
+  visitedAt    DateTime @default(now())
+
+  visitor    User @relation("ProfileVisitsMade", fields: [visitorId], references: [id], onDelete: Cascade)
+  viewedUser User @relation("ProfileVisitsReceived", fields: [viewedUserId], references: [id], onDelete: Cascade)
+
+  @@unique([visitorId, viewedUserId])
+  @@index([viewedUserId, visitedAt(sort: Desc)])
+  @@index([visitorId])
 }

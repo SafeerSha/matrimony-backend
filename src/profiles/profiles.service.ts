@@ -389,6 +389,11 @@ export class ProfilesService {
       let isDeclinedByMe = false;
 
       if (viewerId && profile.userId && viewerId !== profile.userId) {
+        // Record profile visit asynchronously without delaying profile payload
+        this.recordProfileVisit(viewerId, profile.userId).catch((err) => {
+          this.logger.warn(`Failed to record profile visit: ${err?.message}`);
+        });
+
         let connection: any = null;
         try {
           connection = await this.prisma.connection.findFirst({
@@ -1086,5 +1091,171 @@ export class ProfilesService {
       message: 'Your profile has been reactivated successfully.',
       status: updated.status,
     };
+  }
+
+  async recordProfileVisit(visitorId: string, viewedUserId: string) {
+    if (!visitorId || !viewedUserId || visitorId === viewedUserId) {
+      return { success: false };
+    }
+
+    try {
+      // Resolve target user UUID if passed an identifier
+      let resolvedTargetId = viewedUserId;
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(viewedUserId)) {
+        const target = await this.prisma.user.findFirst({
+          where: {
+            OR: [
+              { profileId: viewedUserId },
+              { profileId: { equals: viewedUserId, mode: 'insensitive' } },
+              { profile: { id: viewedUserId } },
+            ],
+          },
+          select: { id: true },
+        });
+        if (target) resolvedTargetId = target.id;
+      }
+
+      if (resolvedTargetId === visitorId) return { success: false };
+
+      await this.prisma.profileVisit.upsert({
+        where: {
+          visitorId_viewedUserId: {
+            visitorId,
+            viewedUserId: resolvedTargetId,
+          },
+        },
+        create: {
+          visitorId,
+          viewedUserId: resolvedTargetId,
+          visitedAt: new Date(),
+        },
+        update: {
+          visitedAt: new Date(),
+        },
+      });
+
+      return { success: true };
+    } catch (e: any) {
+      this.logger.warn(`Failed to record profile visit (${visitorId} -> ${viewedUserId}): ${e?.message}`);
+      return { success: false };
+    }
+  }
+
+  async getRecentVisitors(userId: string, limit = 20) {
+    if (!userId) return [];
+    const safeLimit = Math.min(Math.max(limit, 1), 50);
+
+    // Collect blocked user IDs to preserve privacy
+    let blockedIds: string[] = [];
+    try {
+      const [blockedRelations, blockedConnections] = await Promise.all([
+        this.prisma.blockedUser
+          ? this.prisma.blockedUser.findMany({
+              where: {
+                OR: [{ blockerId: userId }, { blockedId: userId }],
+              },
+              select: { blockerId: true, blockedId: true },
+            })
+          : [],
+        this.prisma.connection.findMany({
+          where: {
+            status: 'BLOCKED',
+            OR: [{ senderId: userId }, { receiverId: userId }],
+          },
+          select: { senderId: true, receiverId: true },
+        }),
+      ]);
+
+      const idSet = new Set<string>();
+      for (const b of blockedRelations) {
+        if (b.blockerId !== userId) idSet.add(b.blockerId);
+        if (b.blockedId !== userId) idSet.add(b.blockedId);
+      }
+      for (const c of blockedConnections) {
+        if (c.senderId !== userId) idSet.add(c.senderId);
+        if (c.receiverId !== userId) idSet.add(c.receiverId);
+      }
+      blockedIds = Array.from(idSet);
+    } catch (err: any) {
+      this.logger.warn(`Failed to query blocked users for visitors: ${err?.message}`);
+    }
+
+    const visits = await this.prisma.profileVisit.findMany({
+      where: {
+        viewedUserId: userId,
+        visitorId: {
+          notIn: [userId, ...blockedIds],
+        },
+        visitor: {
+          status: 'ACTIVE',
+          deletedAt: null,
+          deactivatedAt: null,
+          isBanned: false,
+          NOT: [{ email: { contains: 'demo.ishtamchat.com' } }],
+        },
+      },
+      orderBy: { visitedAt: 'desc' },
+      take: safeLimit,
+      include: {
+        visitor: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            profileId: true,
+            lastActiveAt: true,
+            isPhoneVerified: true,
+            profile: {
+              select: {
+                firstName: true,
+                lastName: true,
+                gender: true,
+                dateOfBirth: true,
+                city: true,
+                occupation: true,
+                category: true,
+                profileFor: true,
+              },
+            },
+            photos: {
+              where: { isPrimary: true },
+              take: 1,
+              select: { url: true, isVerified: true },
+            },
+          },
+        },
+      },
+    });
+
+    return visits.map((v) => {
+      const u = v.visitor;
+      const p = u.profile;
+      const resolvedFirst = p?.firstName || u.firstName || 'Member';
+      const resolvedLast = p?.lastName || u.lastName || '';
+      const resolvedFull = `${resolvedFirst} ${resolvedLast}`.trim();
+      const primaryPhoto = u.photos?.[0]?.url || null;
+      const isOnline = u.lastActiveAt
+        ? Date.now() - new Date(u.lastActiveAt).getTime() <= 5 * 60 * 1000
+        : false;
+      const age = p?.dateOfBirth ? calculateAge(p.dateOfBirth) : null;
+
+      return {
+        id: u.id,
+        profileId: u.profileId,
+        name: resolvedFirst,
+        firstName: resolvedFirst,
+        fullName: resolvedFull,
+        avatar: primaryPhoto,
+        image: primaryPhoto,
+        gender: p?.gender || null,
+        age,
+        city: p?.city || null,
+        occupation: p?.occupation || null,
+        category: p?.category || p?.profileFor || 'Marriage',
+        online: isOnline,
+        verified: Boolean(u.isPhoneVerified || u.photos?.[0]?.isVerified),
+        visitedAt: v.visitedAt,
+      };
+    });
   }
 }
