@@ -23,6 +23,7 @@ describe('ChatGateway', () => {
   const mockChatService = {
     sendMessage: jest.fn<any>(),
     markAsRead: jest.fn<any>(),
+    toggleReaction: jest.fn<any>(),
   };
 
   const mockPrismaService = {
@@ -411,6 +412,43 @@ describe('ChatGateway', () => {
         event: 'batch_presence',
         data: { 'user-online': true, 'user-offline': false },
       });
+    });
+  });
+
+  describe('react_message', () => {
+    it('should return error if unauthenticated', async () => {
+      const client = createClient('sock-anon');
+      const res = await gateway.handleReactMessage(client, { messageId: 'm1', emoji: '❤️' });
+      expect(res).toEqual({ event: 'error', data: 'Unauthorized' });
+    });
+
+    it('should toggle reaction and broadcast message_reaction event to participants', async () => {
+      const client = createClient('sock-1', { data: { user: { sub: 'user-1' } } });
+      jest.spyOn(gateway, 'emitToUser').mockReturnValue(true);
+
+      mockChatService.toggleReaction.mockResolvedValue({
+        messageId: 'm1',
+        userId: 'user-1',
+        emoji: '❤️',
+        action: 'ADDED',
+        reactions: [{ id: 'r1', userId: 'user-1', emoji: '❤️' }],
+        senderId: 'user-1',
+        receiverId: 'user-2',
+      });
+
+      const res = await gateway.handleReactMessage(client, { messageId: 'm1', emoji: '❤️' });
+      expect(res.event).toBe('react_message_ack');
+      expect(mockChatService.toggleReaction).toHaveBeenCalledWith('user-1', 'm1', '❤️');
+      expect(gateway.emitToUser).toHaveBeenCalledWith('user-1', 'message_reaction', expect.objectContaining({
+        messageId: 'm1',
+        emoji: '❤️',
+        action: 'ADDED',
+      }));
+      expect(gateway.emitToUser).toHaveBeenCalledWith('user-2', 'message_reaction', expect.objectContaining({
+        messageId: 'm1',
+        emoji: '❤️',
+        action: 'ADDED',
+      }));
     });
   });
 });

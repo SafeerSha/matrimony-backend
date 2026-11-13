@@ -26,11 +26,19 @@ describe('ChatService', () => {
     },
     message: {
       create: jest.fn<any>(),
+      findUnique: jest.fn<any>(),
       findFirst: jest.fn<any>(),
       findMany: jest.fn<any>(),
       groupBy: jest.fn<any>(),
       count: jest.fn<any>(),
       updateMany: jest.fn<any>(),
+    },
+    messageReaction: {
+      findUnique: jest.fn<any>(),
+      findMany: jest.fn<any>(),
+      create: jest.fn<any>(),
+      update: jest.fn<any>(),
+      delete: jest.fn<any>(),
     },
   };
 
@@ -444,6 +452,101 @@ describe('ChatService', () => {
 
       const convs = await service.getConversations('user-1');
       expect(convs).toEqual([]);
+    });
+  });
+
+  describe('toggleReaction', () => {
+    it('should add a reaction if none exists', async () => {
+      mockPrisma.message.findUnique.mockResolvedValue({
+        id: 'msg-1',
+        senderId: 'user-1',
+        receiverId: 'user-2',
+      });
+      mockPrisma.messageReaction.findUnique.mockResolvedValue(null);
+      mockPrisma.messageReaction.create.mockResolvedValue({
+        id: 'react-1',
+        messageId: 'msg-1',
+        userId: 'user-1',
+        emoji: '❤️',
+      });
+      mockPrisma.messageReaction.findMany.mockResolvedValue([
+        { id: 'react-1', messageId: 'msg-1', userId: 'user-1', emoji: '❤️', createdAt: new Date() },
+      ]);
+
+      const res = await service.toggleReaction('user-1', 'msg-1', '❤️');
+      expect(res.action).toBe('ADDED');
+      expect(res.emoji).toBe('❤️');
+      expect(res.reactions).toHaveLength(1);
+      expect(mockPrisma.messageReaction.create).toHaveBeenCalledWith({
+        data: { messageId: 'msg-1', userId: 'user-1', emoji: '❤️' },
+      });
+    });
+
+    it('should remove a reaction if user clicked same emoji', async () => {
+      mockPrisma.message.findUnique.mockResolvedValue({
+        id: 'msg-1',
+        senderId: 'user-1',
+        receiverId: 'user-2',
+      });
+      mockPrisma.messageReaction.findUnique.mockResolvedValue({
+        id: 'react-1',
+        messageId: 'msg-1',
+        userId: 'user-1',
+        emoji: '❤️',
+      });
+      mockPrisma.messageReaction.delete.mockResolvedValue({ id: 'react-1' });
+      mockPrisma.messageReaction.findMany.mockResolvedValue([]);
+
+      const res = await service.toggleReaction('user-1', 'msg-1', '❤️');
+      expect(res.action).toBe('REMOVED');
+      expect(res.emoji).toBeNull();
+      expect(res.reactions).toHaveLength(0);
+      expect(mockPrisma.messageReaction.delete).toHaveBeenCalledWith({
+        where: { id: 'react-1' },
+      });
+    });
+
+    it('should update a reaction if user clicked a different emoji', async () => {
+      mockPrisma.message.findUnique.mockResolvedValue({
+        id: 'msg-1',
+        senderId: 'user-1',
+        receiverId: 'user-2',
+      });
+      mockPrisma.messageReaction.findUnique.mockResolvedValue({
+        id: 'react-1',
+        messageId: 'msg-1',
+        userId: 'user-1',
+        emoji: '❤️',
+      });
+      mockPrisma.messageReaction.update.mockResolvedValue({
+        id: 'react-1',
+        messageId: 'msg-1',
+        userId: 'user-1',
+        emoji: '👍',
+      });
+      mockPrisma.messageReaction.findMany.mockResolvedValue([
+        { id: 'react-1', messageId: 'msg-1', userId: 'user-1', emoji: '👍', createdAt: new Date() },
+      ]);
+
+      const res = await service.toggleReaction('user-1', 'msg-1', '👍');
+      expect(res.action).toBe('UPDATED');
+      expect(res.emoji).toBe('👍');
+      expect(mockPrisma.messageReaction.update).toHaveBeenCalledWith({
+        where: { id: 'react-1' },
+        data: { emoji: '👍' },
+      });
+    });
+
+    it('should throw ForbiddenException if user is not a participant in the conversation', async () => {
+      mockPrisma.message.findUnique.mockResolvedValue({
+        id: 'msg-1',
+        senderId: 'user-1',
+        receiverId: 'user-2',
+      });
+
+      await expect(service.toggleReaction('intruder', 'msg-1', '❤️')).rejects.toThrow(
+        ForbiddenException,
+      );
     });
   });
 });

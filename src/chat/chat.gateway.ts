@@ -334,6 +334,52 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     });
   }
 
+  @SubscribeMessage('react_message')
+  async handleReactMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: { messageId: string; emoji: string },
+  ) {
+    const senderId = client.data?.user?.sub;
+    if (!senderId) {
+      return { event: 'error', data: 'Unauthorized' };
+    }
+
+    if (!payload?.messageId || !payload?.emoji) {
+      return { event: 'error', data: 'messageId and emoji are required' };
+    }
+
+    try {
+      const result = await this.chatService.toggleReaction(
+        senderId,
+        payload.messageId,
+        payload.emoji,
+      );
+
+      // Emit real-time reaction update to both participants
+      this.emitToUser(result.senderId, 'message_reaction', {
+        messageId: result.messageId,
+        userId: result.userId,
+        emoji: result.emoji,
+        action: result.action,
+        reactions: result.reactions,
+      });
+
+      if (result.receiverId !== result.senderId) {
+        this.emitToUser(result.receiverId, 'message_reaction', {
+          messageId: result.messageId,
+          userId: result.userId,
+          emoji: result.emoji,
+          action: result.action,
+          reactions: result.reactions,
+        });
+      }
+
+      return { event: 'react_message_ack', data: result };
+    } catch (error: any) {
+      return { event: 'error', data: error.message || 'Failed to react to message' };
+    }
+  }
+
   private extractToken(client: Socket): string | null {
     // 1. client.handshake.auth.token
     const authToken = client.handshake?.auth?.token;

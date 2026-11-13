@@ -6,6 +6,7 @@ import { SubscriptionPermitGuard, RequirePermit } from '../subscription/guards/s
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { ChatHistoryQueryDto } from './dto/chat-history-query.dto';
+import { ReactMessageDto } from './dto/reaction.dto';
 
 @ApiTags('Chat')
 @ApiBearerAuth('JWT-auth')
@@ -76,5 +77,15 @@ export class ChatController {
     const contactId = conversationId.replace('conv-', '');
     await this.chatService.markAsRead(user.sub, contactId);
     return { success: true };
+  }
+
+  @Throttle({ default: { limit: 60, ttl: 60000 } })
+  @Post('messages/:messageId/reactions')
+  async toggleReactionHttp(
+    @CurrentUser() user: any,
+    @Param('messageId') messageId: string,
+    @Body() body: ReactMessageDto,
+  ) {
+    return this.chatService.toggleReaction(user.sub, messageId, body.emoji);
   }
 }

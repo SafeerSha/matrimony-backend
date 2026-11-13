@@ -416,6 +416,14 @@ export class ChatService {
         isRead: true,
         createdAt: true,
         updatedAt: true,
+        reactions: {
+          select: {
+            id: true,
+            userId: true,
+            emoji: true,
+            createdAt: true,
+          },
+        },
       },
       orderBy:
         direction === 'after'
@@ -704,6 +712,94 @@ export class ChatService {
           }
         : null,
       message: 'Conversation initialized successfully',
+    };
+  }
+
+  /**
+   * Toggles an emoji reaction on a message.
+   * If the user already reacted with the same emoji, the reaction is removed.
+   * If the user reacted with a different emoji, the reaction is updated.
+   * If no reaction exists from this user, a new reaction is added.
+   */
+  async toggleReaction(userId: string, messageId: string, rawEmoji: string) {
+    if (!userId) {
+      throw new ForbiddenException('Unauthorized');
+    }
+    if (!messageId || typeof messageId !== 'string') {
+      throw new BadRequestException('Valid messageId is required');
+    }
+    if (!rawEmoji || typeof rawEmoji !== 'string' || !rawEmoji.trim()) {
+      throw new BadRequestException('Valid emoji is required');
+    }
+
+    const emoji = rawEmoji.trim();
+    if (emoji.length > 16) {
+      throw new BadRequestException('Emoji cannot exceed 16 characters');
+    }
+
+    const message = await this.prisma.message.findUnique({
+      where: { id: messageId },
+      select: { id: true, senderId: true, receiverId: true },
+    });
+
+    if (!message) {
+      throw new BadRequestException('Message not found');
+    }
+
+    if (message.senderId !== userId && message.receiverId !== userId) {
+      throw new ForbiddenException('You can only react to messages in your own conversations.');
+    }
+
+    const existing = await this.prisma.messageReaction.findUnique({
+      where: {
+        messageId_userId: { messageId, userId },
+      },
+    });
+
+    let action: 'ADDED' | 'UPDATED' | 'REMOVED' = 'ADDED';
+
+    if (existing) {
+      if (existing.emoji === emoji) {
+        await this.prisma.messageReaction.delete({
+          where: { id: existing.id },
+        });
+        action = 'REMOVED';
+      } else {
+        await this.prisma.messageReaction.update({
+          where: { id: existing.id },
+          data: { emoji },
+        });
+        action = 'UPDATED';
+      }
+    } else {
+      await this.prisma.messageReaction.create({
+        data: {
+          messageId,
+          userId,
+          emoji,
+        },
+      });
+      action = 'ADDED';
+    }
+
+    const allReactions = await this.prisma.messageReaction.findMany({
+      where: { messageId },
+      select: {
+        id: true,
+        userId: true,
+        emoji: true,
+        createdAt: true,
+      },
+    });
+
+    return {
+      messageId,
+      userId,
+      emoji: action === 'REMOVED' ? null : emoji,
+      action,
+      reactions: allReactions,
+      senderId: message.senderId,
+      receiverId: message.receiverId,
     };
   }
 }
