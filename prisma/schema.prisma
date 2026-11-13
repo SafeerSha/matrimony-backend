@@ -79,6 +79,7 @@ model Profile {
   bio              String?
   religion         String?
   caste            String?
+  nakshatra        String?
   education        String?
   occupation       String?
   employmentStatus String?
