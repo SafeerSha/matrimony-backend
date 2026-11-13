@@ -452,17 +452,25 @@ export class AdminService {
       }
     }
 
-    let cleanPhone: string | undefined = undefined;
+    let cleanPhone: string | null | undefined = undefined;
     if (dto.phone !== undefined) {
       const trimmedPhone = dto.phone.trim();
-      cleanPhone = trimmedPhone ? normalizePhoneNumber(trimmedPhone) : undefined;
-      if (cleanPhone && cleanPhone !== user.phone) {
-        const existingPhone = await this.prisma.user.findFirst({
-          where: { phone: cleanPhone, NOT: { id: userId } },
-        });
-        if (existingPhone) {
-          throw new ConflictException('An account with this phone number already exists.');
+      if (trimmedPhone) {
+        const normalized = normalizePhoneNumber(trimmedPhone);
+        if (!normalized) {
+          throw new BadRequestException('Please provide a valid phone number.');
         }
+        if (normalized !== user.phone) {
+          const existingPhone = await this.prisma.user.findFirst({
+            where: { phone: normalized, NOT: { id: userId } },
+          });
+          if (existingPhone) {
+            throw new ConflictException('An account with this phone number already exists.');
+          }
+        }
+        cleanPhone = normalized;
+      } else {
+        cleanPhone = null;
       }
     }
 
@@ -477,7 +485,7 @@ export class AdminService {
       where: { id: userId },
       data: {
         ...(cleanEmail !== undefined ? { email: cleanEmail } : {}),
-        ...(dto.phone !== undefined ? { phone: cleanPhone ?? null } : {}),
+        ...(dto.phone !== undefined ? { phone: cleanPhone } : {}),
         ...(cleanFirst !== undefined ? { firstName: cleanFirst } : {}),
         ...(cleanLast !== undefined ? { lastName: cleanLast } : {}),
         ...(user.profile
@@ -485,7 +493,7 @@ export class AdminService {
               profile: {
                 update: {
                   ...(cleanFirst !== undefined ? { firstName: cleanFirst } : {}),
-                  ...(cleanLast !== undefined ? { lastName: cleanLast ?? '' } : {}),
+                  ...(cleanLast !== undefined ? { lastName: cleanLast } : {}),
                 },
               },
             }
