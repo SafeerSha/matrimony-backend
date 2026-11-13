@@ -153,6 +153,16 @@ export class CompleteOnboardingDto {
   familyDetails?: any;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  friendshipGoals?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  genderPreference?: string;
+
+  @IsOptional()
   @IsBoolean()
   skipPhotoCheck?: boolean;
 }

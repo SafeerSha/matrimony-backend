@@ -628,6 +628,8 @@ export class ProfilesService {
       motherTongue,
       lifestyle,
       interests,
+      friendshipGoals,
+      genderPreference,
       ...rawRest
     } = data;
 
@@ -802,6 +804,8 @@ export class ProfilesService {
       ...(motherTongue !== undefined ? { motherTongue: sanitizeText(motherTongue, 100) ?? null } : {}),
       ...(effectiveLifestyle !== undefined ? { lifestyle: effectiveLifestyle } : {}),
       ...(effectiveInterests !== undefined ? { interests: effectiveInterests } : {}),
+      ...(friendshipGoals !== undefined ? { friendshipGoals: sanitizeText(friendshipGoals, 255) ?? null } : {}),
+      ...(genderPreference !== undefined ? { genderPreference: sanitizeText(genderPreference, 100) ?? null } : {}),
     };
 
     await this.prisma.profile.upsert({
