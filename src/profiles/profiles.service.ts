@@ -632,6 +632,7 @@ export class ProfilesService {
       genderPreference,
       nakshatra,
       star,
+      habits,
       ...rawRest
     } = data;
 
@@ -799,6 +800,7 @@ export class ProfilesService {
       ...(religion !== undefined ? { religion: sanitizeText(religion, 100) ?? null } : {}),
       ...(caste !== undefined ? { caste: sanitizeText(caste, 100) ?? null } : {}),
       ...(nakshatra !== undefined || star !== undefined ? { nakshatra: sanitizeText(nakshatra ?? star, 100) ?? null } : {}),
+      ...(habits !== undefined ? { habits: sanitizeText(habits, 1000) ?? null } : {}),
       ...(maritalStatus !== undefined ? { maritalStatus: sanitizeText(maritalStatus, 100) ?? null } : {}),
       ...(profileFor !== undefined ? { profileFor: sanitizeText(profileFor, 50) ?? null } : {}),
       ...(category !== undefined ? { category: sanitizeText(category, 50) ?? 'Marriage' } : {}),

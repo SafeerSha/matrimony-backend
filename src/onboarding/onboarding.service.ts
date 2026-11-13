@@ -138,6 +138,7 @@ export class OnboardingService {
         ...(dto.friendshipGoals ? { friendshipGoals: sanitizeText(dto.friendshipGoals, 255) } : {}),
         ...(dto.genderPreference ? { genderPreference: sanitizeText(dto.genderPreference, 100) } : {}),
         ...(dto.nakshatra || dto.star ? { nakshatra: sanitizeText(dto.nakshatra || dto.star, 100) } : {}),
+        ...(dto.habits !== undefined ? { habits: sanitizeText(dto.habits, 1000) } : {}),
       };
 
       const updatedProfile = await tx.profile.upsert({

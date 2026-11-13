@@ -80,6 +80,7 @@ model Profile {
   religion         String?
   caste            String?
   nakshatra        String?
+  habits           String?
   education        String?
   occupation       String?
   employmentStatus String?
