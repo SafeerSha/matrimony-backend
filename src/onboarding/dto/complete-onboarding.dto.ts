@@ -173,6 +173,11 @@ export class CompleteOnboardingDto {
   star?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  habits?: string;
+
+  @IsOptional()
   @IsBoolean()
   skipPhotoCheck?: boolean;
 }

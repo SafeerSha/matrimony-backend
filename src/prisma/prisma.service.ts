@@ -53,6 +53,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         ALTER TABLE "Profile" ADD COLUMN IF NOT EXISTS "friendshipGoals" TEXT;
         ALTER TABLE "Profile" ADD COLUMN IF NOT EXISTS "genderPreference" TEXT;
         ALTER TABLE "Profile" ADD COLUMN IF NOT EXISTS "nakshatra" TEXT;
+        ALTER TABLE "Profile" ADD COLUMN IF NOT EXISTS "habits" TEXT;
         CREATE TABLE IF NOT EXISTS "MessageReaction" (
             "id" TEXT NOT NULL,
             "messageId" TEXT NOT NULL,
