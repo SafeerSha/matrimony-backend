@@ -120,19 +120,22 @@ describe('NotificationsService', () => {
     );
   });
 
-  it('should get user notifications newest-first with pagination metadata', async () => {
-    const newer = { id: 'n2', type: 'NEW_INTEREST', content: 'Hi', referenceId: 'u2', createdAt: new Date('2026-01-02T10:00:00Z') };
+  it('should get user notifications newest-first with pagination metadata and sender category', async () => {
+    const newer = { id: 'n2', type: 'NEW_INTEREST', content: 'Someone sent you an interest!', referenceId: 'u2', createdAt: new Date('2026-01-02T10:00:00Z') };
     const older = { id: 'n1', type: 'MATCH_ACCEPTED', content: 'Match', referenceId: 'u3', createdAt: new Date('2026-01-01T10:00:00Z') };
     mockPrisma.notification.findMany.mockResolvedValue([newer, older]);
     mockPrisma.user.findMany.mockResolvedValue([
-      { id: 'u2', firstName: 'Asha', lastName: 'Menon', profile: { city: 'Kochi' }, photos: [] },
-      { id: 'u3', firstName: 'Rahul', lastName: 'Nair', profile: { city: 'TVM' }, photos: [] },
+      { id: 'u2', firstName: 'Asha', lastName: 'Menon', profile: { city: 'Kochi', category: 'Friendship' }, photos: [] },
+      { id: 'u3', firstName: 'Rahul', lastName: 'Nair', profile: { city: 'TVM', category: 'Marriage' }, photos: [] },
     ]);
 
     const result = await service.getUserNotifications('1');
     expect(result.data).toHaveLength(2);
     expect(result.data[0].id).toBe('n2');
+    expect(result.data[0].sender?.category).toBe('Friendship');
+    expect(result.data[0].content).toBe('Asha Menon sent you a Friendship interest');
     expect(result.data[1].id).toBe('n1');
+    expect(result.data[1].sender?.category).toBe('Marriage');
     expect(result.meta).toEqual({
       limit: 50,
       count: 2,
