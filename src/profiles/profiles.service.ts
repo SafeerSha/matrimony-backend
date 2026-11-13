@@ -630,6 +630,8 @@ export class ProfilesService {
       interests,
       friendshipGoals,
       genderPreference,
+      nakshatra,
+      star,
       ...rawRest
     } = data;
 
@@ -796,6 +798,7 @@ export class ProfilesService {
       ...(lookingIn !== undefined ? { lookingIn: sanitizeText(lookingIn, 100) ?? null } : {}),
       ...(religion !== undefined ? { religion: sanitizeText(religion, 100) ?? null } : {}),
       ...(caste !== undefined ? { caste: sanitizeText(caste, 100) ?? null } : {}),
+      ...(nakshatra !== undefined || star !== undefined ? { nakshatra: sanitizeText(nakshatra ?? star, 100) ?? null } : {}),
       ...(maritalStatus !== undefined ? { maritalStatus: sanitizeText(maritalStatus, 100) ?? null } : {}),
       ...(profileFor !== undefined ? { profileFor: sanitizeText(profileFor, 50) ?? null } : {}),
       ...(category !== undefined ? { category: sanitizeText(category, 50) ?? 'Marriage' } : {}),

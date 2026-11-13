@@ -163,6 +163,16 @@ export class CompleteOnboardingDto {
   genderPreference?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  nakshatra?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  star?: string;
+
+  @IsOptional()
   @IsBoolean()
   skipPhotoCheck?: boolean;
 }

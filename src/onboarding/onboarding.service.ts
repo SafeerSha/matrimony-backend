@@ -137,6 +137,7 @@ export class OnboardingService {
         ...(dto.familyDetails !== undefined ? { familyDetails: dto.familyDetails } : {}),
         ...(dto.friendshipGoals ? { friendshipGoals: sanitizeText(dto.friendshipGoals, 255) } : {}),
         ...(dto.genderPreference ? { genderPreference: sanitizeText(dto.genderPreference, 100) } : {}),
+        ...(dto.nakshatra || dto.star ? { nakshatra: sanitizeText(dto.nakshatra || dto.star, 100) } : {}),
       };
 
       const updatedProfile = await tx.profile.upsert({

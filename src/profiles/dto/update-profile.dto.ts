@@ -230,4 +230,14 @@ export class UpdateProfileDto {
   @IsString()
   @MaxLength(100)
   genderPreference?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  nakshatra?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  star?: string;
 }
