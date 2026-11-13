@@ -106,3 +106,4 @@ export class RevenueExportQueryDto {
   @IsISO8601({}, { message: 'to must be a valid ISO 8601 date string' })
   to?: string;
 }
+

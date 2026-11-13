@@ -89,3 +89,4 @@ describe('RevenueController', () => {
     expect(mockRes.send).toHaveBeenCalledWith('CSV,DATA\n1,2');
   });
 });
+

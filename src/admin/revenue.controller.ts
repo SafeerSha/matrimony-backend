@@ -74,3 +74,4 @@ export class RevenueController {
     res.send(csvData);
   }
 }
+
