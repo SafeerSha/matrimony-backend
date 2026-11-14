@@ -19,6 +19,7 @@ id_rsa*
 # Database Backups & Dumps
 backups/
 *.sql
+!prisma/migrations/**/*.sql
 *.dump
 *.bak
 
