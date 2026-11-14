@@ -1145,6 +1145,41 @@ export class ProfilesService {
     if (!userId) return [];
     const safeLimit = Math.min(Math.max(limit, 1), 50);
 
+    // Check whether the viewing user has an active paid plan
+    let isPaid = false;
+    try {
+      const currentUser = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          subscriptionTier: true,
+          subscription: {
+            select: {
+              status: true,
+              canChat: true,
+              expiresAt: true,
+            },
+          },
+        },
+      });
+
+      const isExpired = currentUser?.subscription?.expiresAt
+        ? new Date(currentUser.subscription.expiresAt) <= new Date()
+        : false;
+      isPaid = Boolean(
+        (currentUser?.subscription &&
+          currentUser.subscription.status === 'ACTIVE' &&
+          currentUser.subscription.canChat &&
+          !isExpired) ||
+        (currentUser?.subscriptionTier &&
+          ['PLUS', 'ELITE', 'PREMIUM', 'PAID', 'STANDARD'].includes(
+            currentUser.subscriptionTier.toUpperCase(),
+          ))
+      );
+    } catch (subErr: any) {
+      this.logger.warn(`Failed to query user subscription for visitors: ${subErr?.message}`);
+    }
+
     // Collect blocked user IDs to preserve privacy
     let blockedIds: string[] = [];
     try {
@@ -1255,6 +1290,8 @@ export class ProfilesService {
         online: isOnline,
         verified: Boolean(u.isPhoneVerified || u.photos?.[0]?.isVerified),
         visitedAt: v.visitedAt,
+        isBlurred: !isPaid,
+        isLocked: !isPaid,
       };
     });
   }

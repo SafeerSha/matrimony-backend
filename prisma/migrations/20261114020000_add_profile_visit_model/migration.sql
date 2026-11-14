@@ -34,3 +34,4 @@ DO $$ BEGIN
         ALTER TABLE "ProfileVisit" ADD CONSTRAINT "ProfileVisit_viewedUserId_fkey" FOREIGN KEY ("viewedUserId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
     END IF;
 END $$;
+
