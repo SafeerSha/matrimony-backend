@@ -49,10 +49,10 @@ describe('ReportController', () => {
     jest.clearAllMocks();
   });
 
-  it('should enforce ADMIN role on getReportsAdmin and updateReportAdmin', () => {
+  it('should enforce ADMIN and RM roles on getReportsAdmin and updateReportAdmin', () => {
     const reflector = new Reflector();
-    expect(reflector.get<string[]>(ROLES_KEY, controller.getReportsAdmin)).toEqual(['ADMIN']);
-    expect(reflector.get<string[]>(ROLES_KEY, controller.updateReportAdmin)).toEqual(['ADMIN']);
+    expect(reflector.get<string[]>(ROLES_KEY, controller.getReportsAdmin)).toEqual(['ADMIN', 'RM']);
+    expect(reflector.get<string[]>(ROLES_KEY, controller.updateReportAdmin)).toEqual(['ADMIN', 'RM']);
 
     const makeCtx = (role: string, handler: any): ExecutionContext =>
       ({
@@ -67,10 +67,13 @@ describe('ReportController', () => {
       ForbiddenException,
     );
     expect(guard.canActivate(makeCtx('ADMIN', controller.getReportsAdmin))).toBe(true);
+    expect(guard.canActivate(makeCtx('RM', controller.getReportsAdmin))).toBe(true);
+
     expect(() => guard.canActivate(makeCtx('USER', controller.updateReportAdmin))).toThrow(
       ForbiddenException,
     );
     expect(guard.canActivate(makeCtx('ADMIN', controller.updateReportAdmin))).toBe(true);
+    expect(guard.canActivate(makeCtx('RM', controller.updateReportAdmin))).toBe(true);
   });
 
   it('should delegate controller endpoints to ReportService', async () => {

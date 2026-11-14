@@ -57,16 +57,16 @@ export class ReportController {
 
   @Get()
   @UseGuards(RolesGuard)
-  @Roles('ADMIN')
-  @ApiOperation({ summary: 'Admin: List user reports with status and date filters' })
+  @Roles('ADMIN', 'RM')
+  @ApiOperation({ summary: 'Admin & RM: List user reports with status and date filters' })
   async getReportsAdmin(@Query() query: AdminReportQueryDto) {
     return this.reportService.getReportsAdmin(query);
   }
 
   @Patch(':id')
   @UseGuards(RolesGuard)
-  @Roles('ADMIN')
-  @ApiOperation({ summary: 'Admin: Update report status and internal admin notes' })
+  @Roles('ADMIN', 'RM')
+  @ApiOperation({ summary: 'Admin & RM: Update report status and internal moderation notes' })
   async updateReportAdmin(
     @CurrentUser() user: any,
     @Param('id') id: string,
