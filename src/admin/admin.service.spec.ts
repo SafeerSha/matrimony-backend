@@ -205,6 +205,57 @@ describe('AdminService', () => {
       expect(result.success).toBe(true);
       expect(mockSubscriptionService.activatePermit).toHaveBeenCalledWith('u1', 'PLUS', undefined, 60, true);
     });
+
+    it('should activate BASIC 1-month permit when planCode is BASIC and action is apply', async () => {
+      mockPrisma.user.findUnique
+        .mockResolvedValueOnce({
+          id: 'u2',
+          email: 'u2@test.com',
+          subscriptionTier: 'BASIC',
+        } as any)
+        .mockResolvedValueOnce({
+          id: 'u2',
+          email: 'u2@test.com',
+          subscriptionTier: 'BASIC',
+          subscription: { id: 's2', tier: 'BASIC', status: 'ACTIVE', canChat: true },
+        } as any);
+
+      mockSubscriptionService.activatePermit.mockResolvedValue({
+        success: true,
+        message: 'Plan activated',
+        subscription: { id: 's2', tier: 'BASIC', status: 'ACTIVE' },
+      } as any);
+
+      const result = await service.assignUserPlan('u2', { planId: 'BASIC', planCode: 'BASIC', action: 'apply' });
+      expect(result.success).toBe(true);
+      expect(mockSubscriptionService.activatePermit).toHaveBeenCalledWith('u2', 'BASIC', undefined, undefined, true);
+      expect(mockSubscriptionService.cancelChatPermit).not.toHaveBeenCalled();
+    });
+
+    it('should revoke permit when action is revoke', async () => {
+      mockPrisma.user.findUnique
+        .mockResolvedValueOnce({
+          id: 'u3',
+          email: 'u3@test.com',
+          subscriptionTier: 'PLUS',
+        } as any)
+        .mockResolvedValueOnce({
+          id: 'u3',
+          email: 'u3@test.com',
+          subscriptionTier: 'BASIC',
+          subscription: { id: 's3', tier: 'FREE', status: 'CANCELLED', canChat: false },
+        } as any);
+
+      mockSubscriptionService.cancelChatPermit.mockResolvedValue({
+        success: true,
+        subscription: { id: 's3', tier: 'FREE', status: 'CANCELLED' },
+      } as any);
+
+      const result = await service.assignUserPlan('u3', { action: 'revoke' });
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('revoked');
+      expect(mockSubscriptionService.cancelChatPermit).toHaveBeenCalledWith('u3');
+    });
   });
 
   describe('verifyPhoto', () => {

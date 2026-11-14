@@ -169,35 +169,63 @@ export class AdminService {
 
     const where: Prisma.UserWhereInput = {};
 
+    const andConditions: Prisma.UserWhereInput[] = [];
+
     // Full-text search across identity and name fields
     const q = params.search?.trim();
     if (q) {
-      where.OR = [
-        { email: { contains: q, mode: 'insensitive' } },
-        { phone: { contains: q, mode: 'insensitive' } },
-        { firstName: { contains: q, mode: 'insensitive' } },
-        { lastName: { contains: q, mode: 'insensitive' } },
-        { profileId: { contains: q, mode: 'insensitive' } },
-        { profile: { firstName: { contains: q, mode: 'insensitive' } } },
-        { profile: { lastName: { contains: q, mode: 'insensitive' } } },
-      ];
+      andConditions.push({
+        OR: [
+          { email: { contains: q, mode: 'insensitive' } },
+          { phone: { contains: q, mode: 'insensitive' } },
+          { firstName: { contains: q, mode: 'insensitive' } },
+          { lastName: { contains: q, mode: 'insensitive' } },
+          { profileId: { contains: q, mode: 'insensitive' } },
+          { profile: { firstName: { contains: q, mode: 'insensitive' } } },
+          { profile: { lastName: { contains: q, mode: 'insensitive' } } },
+        ],
+      });
     }
 
     // Location filter — city, state, or country in profile
     const loc = params.location?.trim();
     if (loc) {
-      where.profile = {
-        OR: [
-          { city: { contains: loc, mode: 'insensitive' } },
-          { state: { contains: loc, mode: 'insensitive' } },
-          { country: { contains: loc, mode: 'insensitive' } },
-        ],
-      };
+      andConditions.push({
+        profile: {
+          OR: [
+            { city: { contains: loc, mode: 'insensitive' } },
+            { state: { contains: loc, mode: 'insensitive' } },
+            { country: { contains: loc, mode: 'insensitive' } },
+          ],
+        },
+      });
     }
 
     // Plan filter (indexed column)
     if (params.plan && params.plan !== 'ALL') {
-      where.subscriptionTier = params.plan;
+      if (params.plan === 'PAID') {
+        andConditions.push({
+          OR: [
+            { subscriptionTier: { in: ['PAID', 'STANDARD', 'PLUS', 'ELITE', 'PREMIUM'] } },
+            { subscription: { status: 'ACTIVE', canChat: true } },
+          ],
+        });
+      } else if (params.plan === 'BASIC') {
+        andConditions.push({
+          subscriptionTier: 'BASIC',
+          OR: [
+            { subscription: null },
+            { subscription: { status: { not: 'ACTIVE' } } },
+            { subscription: { canChat: false } },
+          ],
+        });
+      } else {
+        andConditions.push({ subscriptionTier: params.plan });
+      }
+    }
+
+    if (andConditions.length > 0) {
+      where.AND = andConditions;
     }
 
     // Role filter (USER vs RM)
@@ -580,7 +608,15 @@ export class AdminService {
       throw new NotFoundException('User not found');
     }
 
-    if (data.action === 'revoke' || data.planCode?.toUpperCase() === 'BASIC' || data.planCode?.toUpperCase() === 'FREE') {
+    const isRevokeAction =
+      data.action === 'revoke' ||
+      (data.action !== 'apply' &&
+        (data.planCode?.toUpperCase() === 'FREE' ||
+          data.planCode?.toUpperCase() === 'REVOKE' ||
+          data.planId?.toUpperCase() === 'FREE' ||
+          data.planId?.toUpperCase() === 'REVOKE'));
+
+    if (isRevokeAction) {
       const result = await this.subscriptionService.cancelChatPermit(userId);
       const updatedUser = await this.prisma.user.findUnique({
         where: { id: userId },
