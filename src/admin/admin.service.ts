@@ -18,6 +18,7 @@ import { normalizePhoneNumber } from '../common/utils/phone.util';
 import { sanitizeText } from '../common/utils/sanitize.util';
 import type { AdminUserQueryDto, AssignPlanBodyDto, CreateAdminUserDto, AdminResetPasswordDto, AdminUpdateUserDto } from './dto/user-query.dto';
 import type { UpdateCoolingPeriodSettingDto } from './dto/platform-setting.dto';
+import type { PhotoModerationQueryDto, PendingProfileQueryDto } from './dto/moderation.dto';
 
 /** Shared select for admin user list — never expose credential fields */
 const USER_LIST_SELECT = {
@@ -750,6 +751,388 @@ export class AdminService {
         ? `Cooling-off period restriction has been ENABLED (${result.days} days required before rejoining).`
         : 'Cooling-off period restriction has been DISABLED. Users can now rejoin and recreate profiles immediately.',
       ...result,
+    };
+  }
+
+  // ==========================================
+  // Image Moderation Module
+  // ==========================================
+
+  async getPhotosForModeration(query: PhotoModerationQueryDto) {
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.min(100, Math.max(1, query.limit ?? 24));
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.PhotoWhereInput = {};
+
+    if (query.status === 'unverified') {
+      where.isVerified = false;
+    } else if (query.status === 'verified') {
+      where.isVerified = true;
+    }
+
+    const q = query.search?.trim();
+    if (q) {
+      where.user = {
+        OR: [
+          { email: { contains: q, mode: 'insensitive' } },
+          { phone: { contains: q, mode: 'insensitive' } },
+          { firstName: { contains: q, mode: 'insensitive' } },
+          { lastName: { contains: q, mode: 'insensitive' } },
+          { profileId: { contains: q, mode: 'insensitive' } },
+        ],
+      };
+    }
+
+    const [photos, total, unverifiedCount] = await Promise.all([
+      this.prisma.photo.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }],
+        include: {
+          user: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phone: true,
+              profileId: true,
+              status: true,
+              role: true,
+            },
+          },
+        },
+      }),
+      this.prisma.photo.count({ where }),
+      this.prisma.photo.count({ where: { isVerified: false } }),
+    ]);
+
+    return {
+      data: photos,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+        unverifiedCount,
+      },
+    };
+  }
+
+  async batchVerifyPhotos(photoIds: string[], status: 'approved' | 'rejected') {
+    if (!photoIds || photoIds.length === 0) {
+      throw new BadRequestException('photoIds cannot be empty');
+    }
+
+    if (status === 'approved') {
+      const res = await this.prisma.photo.updateMany({
+        where: { id: { in: photoIds } },
+        data: { isVerified: true },
+      });
+      return {
+        success: true,
+        message: `${res.count} photo(s) approved and verified successfully.`,
+        count: res.count,
+      };
+    }
+
+    // Rejected: delete from db and storage
+    const photos = await this.prisma.photo.findMany({
+      where: { id: { in: photoIds } },
+    });
+
+    for (const photo of photos) {
+      try {
+        await this.storageService.deleteFile({
+          url: photo.url,
+          objectKey: photo.objectKey,
+          storageProvider: photo.storageProvider,
+        });
+      } catch {
+        // storage cleanup failure is non-blocking
+      }
+    }
+
+    const deleteRes = await this.prisma.photo.deleteMany({
+      where: { id: { in: photoIds } },
+    });
+
+    return {
+      success: true,
+      message: `${deleteRes.count} photo(s) rejected and removed.`,
+      count: deleteRes.count,
+    };
+  }
+
+  // ==========================================
+  // Profile Approval & Rejection Module
+  // ==========================================
+
+  async getPendingProfiles(query: PendingProfileQueryDto) {
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.min(100, Math.max(1, query.limit ?? 20));
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.UserWhereInput = {
+      role: 'USER',
+    };
+
+    if (query.status && query.status !== 'ALL') {
+      where.status = query.status;
+    }
+
+    const q = query.search?.trim();
+    if (q) {
+      where.OR = [
+        { email: { contains: q, mode: 'insensitive' } },
+        { phone: { contains: q, mode: 'insensitive' } },
+        { firstName: { contains: q, mode: 'insensitive' } },
+        { lastName: { contains: q, mode: 'insensitive' } },
+        { profileId: { contains: q, mode: 'insensitive' } },
+      ];
+    }
+
+    const [users, total, pendingCount, rejectedCount] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { updatedAt: 'desc' },
+        select: {
+          ...USER_LIST_SELECT,
+          profileRejectionReason: true,
+          photos: {
+            orderBy: { isPrimary: 'desc' },
+            select: { id: true, url: true, isPrimary: true, isVerified: true },
+          },
+        },
+      }),
+      this.prisma.user.count({ where }),
+      this.prisma.user.count({ where: { role: 'USER', status: 'PENDING_VERIFICATION' } }),
+      this.prisma.user.count({ where: { role: 'USER', status: 'REJECTED' } }),
+    ]);
+
+    return {
+      data: users,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+        pendingCount,
+        rejectedCount,
+      },
+    };
+  }
+
+  async approveProfile(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true, status: true, email: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        status: 'ACTIVE',
+        profileRejectionReason: null,
+      },
+      select: USER_LIST_SELECT,
+    });
+
+    return {
+      success: true,
+      message: 'Profile approved successfully. Account is now active.',
+      user: updated,
+    };
+  }
+
+  async rejectProfile(userId: string, reason: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true, status: true, email: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+
+    const cleanReason = sanitizeText(reason.trim(), 500);
+    if (!cleanReason) {
+      throw new BadRequestException('Rejection reason is required');
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        status: 'REJECTED',
+        profileRejectionReason: cleanReason,
+      },
+      select: USER_LIST_SELECT,
+    });
+
+    return {
+      success: true,
+      message: 'Profile rejected. Feedback provided to member.',
+      user: updated,
+    };
+  }
+
+  // ==========================================
+  // Relationship Manager (RM) Management
+  // ==========================================
+
+  async getRelationshipManagers() {
+    const rms = await this.prisma.user.findMany({
+      where: { role: 'RM' },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        email: true,
+        phone: true,
+        firstName: true,
+        lastName: true,
+        profileId: true,
+        status: true,
+        isBanned: true,
+        lastActiveAt: true,
+        createdAt: true,
+        _count: {
+          select: {
+            assignedClients: true,
+            rmInteractionsAuthored: true,
+            rmFollowUpsAuthored: true,
+            rmShortlistsAuthored: true,
+          },
+        },
+      },
+    });
+
+    return rms.map((rm) => {
+      const isOnline = rm.lastActiveAt
+        ? Date.now() - new Date(rm.lastActiveAt).getTime() < 3 * 60 * 1000
+        : false;
+      return {
+        ...rm,
+        isOnline,
+        assignedClientsCount: rm._count.assignedClients,
+        interactionsCount: rm._count.rmInteractionsAuthored,
+        followUpsCount: rm._count.rmFollowUpsAuthored,
+        shortlistsCount: rm._count.rmShortlistsAuthored,
+      };
+    });
+  }
+
+  async getRmClients(rmId: string) {
+    const rm = await this.prisma.user.findUnique({
+      where: { id: rmId },
+      select: { id: true, firstName: true, lastName: true, role: true },
+    });
+    if (!rm || rm.role !== 'RM') {
+      throw new NotFoundException('Relationship Manager not found');
+    }
+
+    const clients = await this.prisma.user.findMany({
+      where: { assignedRmId: rmId },
+      orderBy: { rmAssignedAt: 'desc' },
+      select: {
+        id: true,
+        email: true,
+        phone: true,
+        firstName: true,
+        lastName: true,
+        profileId: true,
+        status: true,
+        clientStage: true,
+        subscriptionTier: true,
+        rmAssignedAt: true,
+        lastActiveAt: true,
+        profile: {
+          select: {
+            id: true,
+            city: true,
+            state: true,
+            occupation: true,
+            education: true,
+            dateOfBirth: true,
+            category: true,
+            maritalStatus: true,
+          },
+        },
+        photos: {
+          take: 1,
+          orderBy: { isPrimary: 'desc' },
+          select: { id: true, url: true, isPrimary: true, isVerified: true },
+        },
+        _count: {
+          select: {
+            clientInteractionsReceived: true,
+            clientFollowUpsReceived: true,
+            clientShortlistsReceived: true,
+          },
+        },
+      },
+    });
+
+    return {
+      rm,
+      clients,
+    };
+  }
+
+  async assignClientsToRm(rmId: string, clientUserIds: string[], adminId?: string) {
+    const rm = await this.prisma.user.findUnique({
+      where: { id: rmId },
+      select: { id: true, firstName: true, lastName: true, role: true },
+    });
+    if (!rm || rm.role !== 'RM') {
+      throw new NotFoundException('Relationship Manager not found');
+    }
+
+    if (!clientUserIds || clientUserIds.length === 0) {
+      throw new BadRequestException('clientUserIds cannot be empty');
+    }
+
+    const updateRes = await this.prisma.user.updateMany({
+      where: {
+        id: { in: clientUserIds },
+        role: 'USER',
+      },
+      data: {
+        assignedRmId: rmId,
+        rmAssignedAt: new Date(),
+        rmAssignedBy: adminId || 'ADMIN',
+      },
+    });
+
+    return {
+      success: true,
+      message: `Successfully assigned ${updateRes.count} client(s) to ${rm.firstName} ${rm.lastName || ''}.`.trim(),
+      assignedCount: updateRes.count,
+    };
+  }
+
+  async unassignClientsFromRm(clientUserIds: string[]) {
+    if (!clientUserIds || clientUserIds.length === 0) {
+      throw new BadRequestException('clientUserIds cannot be empty');
+    }
+
+    const updateRes = await this.prisma.user.updateMany({
+      where: {
+        id: { in: clientUserIds },
+        role: 'USER',
+      },
+      data: {
+        assignedRmId: null,
+        rmAssignedAt: null,
+        rmAssignedBy: null,
+      },
+    });
+
+    return {
+      success: true,
+      message: `Successfully unassigned ${updateRes.count} client(s).`,
+      unassignedCount: updateRes.count,
     };
   }
 }

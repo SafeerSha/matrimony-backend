@@ -19,6 +19,14 @@ import {
 } from './dto/user-query.dto';
 import { CreatePlanDto, UpdatePlanDto } from './dto/plan.dto';
 import { UpdateCoolingPeriodSettingDto } from './dto/platform-setting.dto';
+import {
+  PhotoModerationQueryDto,
+  BatchVerifyPhotoDto,
+  RejectProfileDto,
+  PendingProfileQueryDto,
+  AssignClientsToRmDto,
+  UnassignClientsDto,
+} from './dto/moderation.dto';
 import { SubscriptionService } from '../subscription/subscription.service';
 import { ApiOperation } from '@nestjs/swagger';
 
@@ -210,5 +218,77 @@ export class AdminController {
     @CurrentUser() user: any,
   ) {
     return this.adminService.updateCoolingPeriodSetting(body, user?.id);
+  }
+
+  // ==========================================
+  // Image Moderation Endpoints
+  // ==========================================
+
+  @Get('photos/moderation')
+  @ApiOperation({ summary: 'List photos for moderation queue (unverified, verified, all)' })
+  async getPhotosForModeration(@Query() query: PhotoModerationQueryDto) {
+    return this.adminService.getPhotosForModeration(query);
+  }
+
+  @Post('photos/batch-verify')
+  @ApiOperation({ summary: 'Batch approve or reject photos in moderation queue' })
+  async batchVerifyPhotos(@Body() body: BatchVerifyPhotoDto) {
+    return this.adminService.batchVerifyPhotos(body.photoIds, body.status);
+  }
+
+  // ==========================================
+  // Profile Approval & Moderation Endpoints
+  // ==========================================
+
+  @Get('profiles/pending')
+  @ApiOperation({ summary: 'List pending or unverified member profiles awaiting approval' })
+  async getPendingProfiles(@Query() query: PendingProfileQueryDto) {
+    return this.adminService.getPendingProfiles(query);
+  }
+
+  @Post('profiles/:id/approve')
+  @ApiOperation({ summary: 'Approve a member profile to active status' })
+  async approveProfile(@Param('id') userId: string) {
+    return this.adminService.approveProfile(userId);
+  }
+
+  @Post('profiles/:id/reject')
+  @ApiOperation({ summary: 'Reject a member profile with detailed reason' })
+  async rejectProfile(
+    @Param('id') userId: string,
+    @Body() body: RejectProfileDto,
+  ) {
+    return this.adminService.rejectProfile(userId, body.reason);
+  }
+
+  // ==========================================
+  // Relationship Manager (RM) Management Endpoints
+  // ==========================================
+
+  @Get('rms')
+  @ApiOperation({ summary: 'List all Relationship Managers with active client stats' })
+  async getRelationshipManagers() {
+    return this.adminService.getRelationshipManagers();
+  }
+
+  @Get('rms/:id/clients')
+  @ApiOperation({ summary: 'List all clients assigned to a specific Relationship Manager' })
+  async getRmClients(@Param('id') rmId: string) {
+    return this.adminService.getRmClients(rmId);
+  }
+
+  @Post('rms/assign')
+  @ApiOperation({ summary: 'Assign clients to a Relationship Manager' })
+  async assignClientsToRm(
+    @Body() body: AssignClientsToRmDto,
+    @CurrentUser() user: any,
+  ) {
+    return this.adminService.assignClientsToRm(body.rmId, body.clientUserIds, user?.id);
+  }
+
+  @Post('rms/unassign')
+  @ApiOperation({ summary: 'Unassign clients from their Relationship Manager' })
+  async unassignClientsFromRm(@Body() body: UnassignClientsDto) {
+    return this.adminService.unassignClientsFromRm(body.clientUserIds);
   }
 }
