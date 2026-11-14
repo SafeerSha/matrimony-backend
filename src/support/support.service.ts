@@ -1,4 +1,11 @@
-import { Injectable, Logger, NotFoundException, ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  ForbiddenException,
+  UnauthorizedException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { CreateInquiryDto } from './dto/create-inquiry.dto';
@@ -48,7 +55,19 @@ export class SupportService {
     };
   }
 
+  /**
+   * One-time rating and feedback submission per user.
+   */
   async createFeedback(dto: CreateFeedbackDto, userId?: string) {
+    if (userId) {
+      const existing = await this.prisma.feedback.findFirst({
+        where: { userId },
+      });
+      if (existing) {
+        throw new BadRequestException('You have already submitted a rating. Ratings are limited to once per account.');
+      }
+    }
+
     const feedback = await this.prisma.feedback.create({
       data: {
         rating: dto.rating,
@@ -70,8 +89,39 @@ export class SupportService {
   }
 
   /**
-   * Retrieves all support inquiries and feedback submitted by the authenticated user,
-   * with complete status tracking and support responses.
+   * Checks if the authenticated user has already submitted a rating.
+   */
+  async getUserRating(userId: string) {
+    if (!userId) {
+      return { hasRated: false, rating: null, feedback: null };
+    }
+
+    const existing = await this.prisma.feedback.findFirst({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        rating: true,
+        type: true,
+        message: true,
+        createdAt: true,
+      },
+    });
+
+    if (!existing) {
+      return { hasRated: false, rating: null, feedback: null };
+    }
+
+    return {
+      hasRated: true,
+      rating: existing.rating,
+      feedback: existing,
+    };
+  }
+
+  /**
+   * Retrieves all customer support inquiries submitted by the authenticated user.
+   * Feedback/ratings are excluded because ratings are not support requests.
    */
   async getUserRequests(userId: string) {
     if (!userId) {
@@ -83,23 +133,16 @@ export class SupportService {
       select: { id: true, email: true },
     });
 
-    const [inquiries, feedbacks] = await Promise.all([
-      this.prisma.supportInquiry.findMany({
-        where: {
-          OR: [
-            { userId },
-            ...(user?.email ? [{ email: { equals: user.email, mode: 'insensitive' as const } }] : []),
-          ],
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 50,
-      }),
-      this.prisma.feedback.findMany({
-        where: { userId },
-        orderBy: { createdAt: 'desc' },
-        take: 50,
-      }),
-    ]);
+    const inquiries = await this.prisma.supportInquiry.findMany({
+      where: {
+        OR: [
+          { userId },
+          ...(user?.email ? [{ email: { equals: user.email, mode: 'insensitive' as const } }] : []),
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
 
     const formattedInquiries = inquiries.map((inq) => {
       const statusUpper = inq.status?.toUpperCase() || 'OPEN';
@@ -139,69 +182,21 @@ export class SupportService {
       };
     });
 
-    const formattedFeedbacks = feedbacks.map((fb) => {
-      const statusUpper = fb.status?.toUpperCase() || 'SUBMITTED';
-      let statusLabel = 'Submitted';
-      let statusBadgeVariant: 'amber' | 'blue' | 'emerald' | 'gray' = 'amber';
-      let statusCategory: 'pending' | 'in_progress' | 'resolved' | 'closed' = 'pending';
-
-      if (['IN_REVIEW', 'REVIEWED', 'PLANNED'].includes(statusUpper)) {
-        statusLabel = statusUpper === 'IN_REVIEW' ? 'Under Review' : statusUpper === 'PLANNED' ? 'Planned' : 'Reviewed';
-        statusBadgeVariant = 'blue';
-        statusCategory = 'in_progress';
-      } else if (['RESOLVED', 'ACTIONED'].includes(statusUpper)) {
-        statusLabel = statusUpper === 'ACTIONED' ? 'Actioned' : 'Resolved';
-        statusBadgeVariant = 'emerald';
-        statusCategory = 'resolved';
-      } else if (statusUpper === 'DISMISSED') {
-        statusLabel = 'Closed';
-        statusBadgeVariant = 'gray';
-        statusCategory = 'closed';
-      }
-
-      const typeLabel = fb.type === 'bug' ? 'Bug Report' : fb.type === 'feature' ? 'Feature Idea' : 'General Feedback';
-
-      return {
-        id: fb.id,
-        referenceNumber: `FBK-${fb.id.replace(/-/g, '').slice(0, 8).toUpperCase()}`,
-        type: fb.type === 'bug' ? 'BUG_REPORT' : fb.type === 'feature' ? 'FEATURE_REQUEST' : 'FEEDBACK',
-        category: typeLabel,
-        subject: `${typeLabel} (${fb.rating} ★)`,
-        message: fb.message,
-        status: statusUpper,
-        statusLabel,
-        statusBadgeVariant,
-        statusCategory,
-        rating: fb.rating,
-        priority: fb.priority,
-        response: fb.rmNotes || null,
-        resolvedAt: fb.reviewedAt || null,
-        createdAt: fb.createdAt,
-        updatedAt: fb.updatedAt,
-      };
-    });
-
-    const allRequests = [...formattedInquiries, ...formattedFeedbacks].sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-    );
-
-    const activeCount = allRequests.filter(
+    const activeCount = formattedInquiries.filter(
       (r) => r.statusCategory === 'pending' || r.statusCategory === 'in_progress',
     ).length;
-    const resolvedCount = allRequests.filter(
+    const resolvedCount = formattedInquiries.filter(
       (r) => r.statusCategory === 'resolved' || r.statusCategory === 'closed',
     ).length;
 
     return {
       success: true,
       summary: {
-        total: allRequests.length,
+        total: formattedInquiries.length,
         active: activeCount,
         resolved: resolvedCount,
-        inquiriesCount: inquiries.length,
-        feedbackCount: feedbacks.length,
       },
-      requests: allRequests,
+      requests: formattedInquiries,
     };
   }
 
