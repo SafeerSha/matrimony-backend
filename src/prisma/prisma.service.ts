@@ -50,6 +50,8 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         ALTER TABLE "Feedback" ADD COLUMN IF NOT EXISTS "reviewedAt" TIMESTAMP(3);
         CREATE INDEX IF NOT EXISTS "Feedback_status_idx" ON "Feedback"("status");
         CREATE INDEX IF NOT EXISTS "Feedback_priority_idx" ON "Feedback"("priority");
+        ALTER TABLE "SupportInquiry" ADD COLUMN IF NOT EXISTS "response" TEXT;
+        ALTER TABLE "SupportInquiry" ADD COLUMN IF NOT EXISTS "resolvedAt" TIMESTAMP(3);
         ALTER TABLE "Profile" ADD COLUMN IF NOT EXISTS "friendshipGoals" TEXT;
         ALTER TABLE "Profile" ADD COLUMN IF NOT EXISTS "genderPreference" TEXT;
         ALTER TABLE "Profile" ADD COLUMN IF NOT EXISTS "nakshatra" TEXT;

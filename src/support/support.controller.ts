@@ -1,9 +1,10 @@
-import { Controller, Post, Body, UseGuards, Req } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { Controller, Post, Get, Patch, Body, Param, UseGuards, UnauthorizedException } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { SupportService } from './support.service';
 import { CreateInquiryDto } from './dto/create-inquiry.dto';
 import { CreateFeedbackDto } from './dto/create-feedback.dto';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 
 @ApiTags('Support')
@@ -45,5 +46,33 @@ export class SupportController {
     const userId = user?.id || user?.sub || undefined;
     return this.supportService.createFeedback(dto, userId);
   }
-}
 
+  @Get('my-requests')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get all support inquiries and feedback submitted by the authenticated user' })
+  @ApiResponse({ status: 200, description: 'User support inquiries and feedback history with follow-up status' })
+  async getMyRequests(@CurrentUser() user: any) {
+    const userId = user?.id || user?.sub;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+    return this.supportService.getUserRequests(userId);
+  }
+
+  @Patch('my-requests/:id/close')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Mark an inquiry as closed by the submitting user' })
+  @ApiResponse({ status: 200, description: 'Inquiry closed successfully' })
+  async closeMyInquiry(
+    @Param('id') inquiryId: string,
+    @CurrentUser() user: any,
+  ) {
+    const userId = user?.id || user?.sub;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+    return this.supportService.closeUserInquiry(userId, inquiryId);
+  }
+}
