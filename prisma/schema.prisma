@@ -18,11 +18,12 @@ model User {
   isPhoneVerified    Boolean        @default(false)
   isEmailVerified    Boolean        @default(false)
   role               String         @default("USER") // 'USER', 'ADMIN', 'RM'
-  status             String         @default("DRAFT") // 'DRAFT', 'PENDING_VERIFICATION', 'ACTIVE', 'SUSPENDED', 'DEACTIVATED', 'DELETED'
+  status             String         @default("DRAFT") // 'DRAFT', 'PENDING_VERIFICATION', 'ACTIVE', 'SUSPENDED', 'DEACTIVATED', 'DELETED', 'REJECTED'
   deactivatedAt      DateTime?
   deletedAt          DateTime?
   deletedBy          String?        // 'USER', 'ADMIN'
   deletionReason     String?
+  profileRejectionReason String?
   subscriptionTier   String         @default("BASIC") // 'BASIC', 'PAID'
   firstName          String?
   lastName           String?
@@ -34,6 +35,13 @@ model User {
   updatedAt          DateTime       @updatedAt
   profile            Profile?
   preference         Preference?
+
+  assignedRmId       String?
+  assignedRm         User?          @relation("RmClients", fields: [assignedRmId], references: [id], onDelete: SetNull)
+  assignedClients    User[]         @relation("RmClients")
+  rmAssignedAt       DateTime?
+  rmAssignedBy       String?
+  clientStage        String         @default("NEW_LEAD") // 'NEW_LEAD', 'ONBOARDED', 'EXPLORING', 'SHORTLISTS_SENT', 'MEETING_ARRANGED', 'PROPOSAL_SENT', 'MATCHED', 'INACTIVE'
 
   sentConnections     Connection[]   @relation("SentConnections")
   receivedConnections Connection[]   @relation("ReceivedConnections")
@@ -59,11 +67,21 @@ model User {
   profileVisitsMade     ProfileVisit[]    @relation("ProfileVisitsMade")
   profileVisitsReceived ProfileVisit[]    @relation("ProfileVisitsReceived")
 
+  rmShortlistsAuthored       RmShortlist[]     @relation("RmShortlistsAuthored")
+  clientShortlistsReceived   RmShortlist[]     @relation("ClientShortlistsReceived")
+  candidateShortlisted       RmShortlist[]     @relation("CandidateShortlisted")
+  rmInteractionsAuthored     RmInteraction[]   @relation("RmInteractionsAuthored")
+  clientInteractionsReceived RmInteraction[]   @relation("ClientInteractionsReceived")
+  rmFollowUpsAuthored        RmFollowUp[]      @relation("RmFollowUpsAuthored")
+  clientFollowUpsReceived    RmFollowUp[]      @relation("ClientFollowUpsReceived")
+
   @@index([createdAt])
   @@index([lastActiveAt])
   @@index([subscriptionTier])
   @@index([isBanned])
   @@index([status])
+  @@index([assignedRmId])
+  @@index([clientStage])
 }
 
 model Profile {
@@ -446,4 +464,69 @@ model PlatformSetting {
   updatedAt   DateTime @updatedAt
   updatedBy   String?
 }
+
+model RmShortlist {
+  id          String   @id @default(uuid())
+  rmId        String
+  clientId    String
+  candidateId String
+  notes       String?
+  status      String   @default("SUGGESTED") // 'SUGGESTED', 'CLIENT_VIEWED', 'ACCEPTED', 'REJECTED'
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  rm        User @relation("RmShortlistsAuthored", fields: [rmId], references: [id], onDelete: Cascade)
+  client    User @relation("ClientShortlistsReceived", fields: [clientId], references: [id], onDelete: Cascade)
+  candidate User @relation("CandidateShortlisted", fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, candidateId])
+  @@index([rmId])
+  @@index([clientId])
+  @@index([candidateId])
+  @@index([createdAt])
+}
+
+model RmInteraction {
+  id            String   @id @default(uuid())
+  rmId          String
+  clientId      String
+  channel       String   @default("CALL") // 'CALL', 'WHATSAPP', 'EMAIL', 'MEETING', 'NOTE'
+  status        String   @default("CONNECTED") // 'CONNECTED', 'ATTEMPTED', 'VOICEMAIL', 'SCHEDULED', 'RESOLVED'
+  clientStage   String   @default("EXPLORING") // 'NEW_LEAD', 'ONBOARDED', 'EXPLORING', 'SHORTLISTS_SENT', 'MEETING_ARRANGED', 'PROPOSAL_SENT', 'MATCHED', 'INACTIVE'
+  summary       String
+  details       String?
+  interactionAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  rm     User @relation("RmInteractionsAuthored", fields: [rmId], references: [id], onDelete: Cascade)
+  client User @relation("ClientInteractionsReceived", fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([rmId, interactionAt(sort: Desc)])
+  @@index([clientId, interactionAt(sort: Desc)])
+  @@index([clientStage])
+}
+
+model RmFollowUp {
+  id              String    @id @default(uuid())
+  rmId            String
+  clientId        String
+  title           String
+  description     String?
+  scheduledAt     DateTime
+  priority        String    @default("MEDIUM") // 'LOW', 'MEDIUM', 'HIGH', 'URGENT'
+  status          String    @default("PENDING") // 'PENDING', 'COMPLETED', 'CANCELLED', 'RESCHEDULED'
+  completedAt     DateTime?
+  completionNotes String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  rm     User @relation("RmFollowUpsAuthored", fields: [rmId], references: [id], onDelete: Cascade)
+  client User @relation("ClientFollowUpsReceived", fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([rmId, scheduledAt])
+  @@index([clientId])
+  @@index([status])
+}
+
 
