@@ -106,11 +106,13 @@ export class AdminController {
   }
 
   @Post('users/:id/ban')
+  @Roles('ADMIN', 'RM')
   async banUser(@Param('id') userId: string) {
     return this.adminService.banUser(userId);
   }
 
   @Post('users/:id/unban')
+  @Roles('ADMIN', 'RM')
   async unbanUser(@Param('id') userId: string) {
     return this.adminService.unbanUser(userId);
   }
