@@ -13,10 +13,58 @@ import { Logger, OnModuleDestroy } from '@nestjs/common';
 import { ChatService } from './chat.service';
 import { SubscriptionService } from '../subscription/subscription.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { sanitizeText } from '../common/utils/sanitize.util';
+
+const isSocketOriginAllowed = (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+  if (!origin) return callback(null, true);
+  const lowerOrigin = origin.toLowerCase().trim();
+  const allowedOrigins = process.env.CORS_ORIGINS;
+  const configuredOrigins = allowedOrigins
+    ? allowedOrigins.split(',').map((o) => o.trim().toLowerCase()).filter(Boolean)
+    : [];
+
+  if (allowedOrigins === '*' || configuredOrigins.includes('*') || configuredOrigins.includes(lowerOrigin)) {
+    return callback(null, true);
+  }
+
+  try {
+    const parsedUrl = new URL(lowerOrigin);
+    const hostname = parsedUrl.hostname.toLowerCase();
+    if (hostname === 'ishtamchat.com' || hostname.endsWith('.ishtamchat.com')) {
+      return callback(null, true);
+    }
+    if (
+      (hostname.startsWith('ishtamchat') || hostname.startsWith('matrimony-web-')) &&
+      hostname.endsWith('.vercel.app')
+    ) {
+      return callback(null, true);
+    }
+  } catch {}
+
+  for (const conf of configuredOrigins) {
+    const confHost = conf.replace(/^https?:\/\//i, '').replace(/^www\./i, '');
+    const originHost = lowerOrigin.replace(/^https?:\/\//i, '').replace(/^www\./i, '');
+    if (confHost && confHost === originHost) {
+      return callback(null, true);
+    }
+  }
+
+  if (
+    process.env.NODE_ENV !== 'production' ||
+    lowerOrigin.startsWith('http://localhost:') ||
+    lowerOrigin.startsWith('http://127.0.0.1:') ||
+    lowerOrigin.startsWith('http://10.') ||
+    lowerOrigin.startsWith('http://192.168.')
+  ) {
+    return callback(null, true);
+  }
+
+  return callback(null, false);
+};
 
 @WebSocketGateway({
   cors: {
-    origin: '*',
+    origin: isSocketOriginAllowed,
     credentials: true,
   },
 })
@@ -26,6 +74,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
 
   private readonly logger = new Logger(ChatGateway.name);
   private userSockets: Map<string, Set<string>> = new Map();
+  private messageRateLimits: Map<string, number[]> = new Map();
+  private readonly MAX_SOCKETS_PER_USER = 5;
+  private readonly MAX_MESSAGES_PER_WINDOW = 10;
+  private readonly RATE_LIMIT_WINDOW_MS = 10000;
 
   constructor(
     private readonly jwtService: JwtService,
@@ -40,6 +92,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       this.server.disconnectSockets?.(true);
     }
     this.userSockets.clear();
+    this.messageRateLimits.clear();
   }
 
   private pruneDeadSockets(sockets: Set<string>, keepSocketId?: string): void {
@@ -59,6 +112,17 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     let sockets = this.userSockets.get(userId);
     if (sockets) {
       this.pruneDeadSockets(sockets, socketId);
+      // Enforce max sockets per user to prevent connection exhaustion
+      while (sockets.size >= this.MAX_SOCKETS_PER_USER) {
+        const oldestSocketId = sockets.values().next().value;
+        if (oldestSocketId) {
+          sockets.delete(oldestSocketId);
+          const socketInstance = (this.server as any)?.sockets?.sockets?.get?.(oldestSocketId);
+          socketInstance?.disconnect?.(true);
+        } else {
+          break;
+        }
+      }
     } else {
       sockets = new Set<string>();
       this.userSockets.set(userId, sockets);
@@ -78,6 +142,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     this.pruneDeadSockets(sockets);
     if (sockets.size === 0) {
       this.userSockets.delete(userId);
+      this.messageRateLimits.delete(userId);
       return { removed: true, wentOffline: true };
     }
     return { removed: true, wentOffline: false };
@@ -255,6 +320,20 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       return { event: 'error', data: 'Unauthorized' };
     }
 
+    // Rate limiting: max 10 messages per 10 seconds per user (DoS prevention)
+    const now = Date.now();
+    const timestamps = (this.messageRateLimits.get(senderId) || []).filter(
+      (t) => now - t < this.RATE_LIMIT_WINDOW_MS,
+    );
+    if (timestamps.length >= this.MAX_MESSAGES_PER_WINDOW) {
+      return {
+        event: 'error',
+        data: 'Rate limit exceeded. Please wait a moment before sending more messages.',
+      };
+    }
+    timestamps.push(now);
+    this.messageRateLimits.set(senderId, timestamps);
+
     const hasPermit = await this.subscriptionService.hasActiveChatPermit(senderId);
     if (!hasPermit) {
       return {
@@ -266,10 +345,25 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       };
     }
 
-    if (!payload?.receiverId || !payload?.content?.trim()) {
+    if (!payload?.receiverId || typeof payload?.content !== 'string' || !payload.content.trim()) {
       return {
         event: 'error',
         data: 'receiverId and non-empty content are required',
+      };
+    }
+
+    if (payload.content.length > 2000) {
+      return {
+        event: 'error',
+        data: 'Message content cannot exceed 2000 characters',
+      };
+    }
+
+    const cleanContent = sanitizeText(payload.content, 2000);
+    if (!cleanContent) {
+      return {
+        event: 'error',
+        data: 'Message content cannot be empty',
       };
     }
 
@@ -277,7 +371,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       const message = await this.chatService.sendMessage(
         senderId,
         payload.receiverId,
-        payload.content.trim(),
+        cleanContent,
       );
 
       const targetReceiverId = message?.receiverId || payload.receiverId;

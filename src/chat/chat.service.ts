@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SubscriptionService } from '../subscription/subscription.service';
 import { calculateCompatibility } from '../common/utils/compatibility.util';
+import { sanitizeText } from '../common/utils/sanitize.util';
 import {
   DEFAULT_CHAT_HISTORY_LIMIT,
   MAX_CHAT_HISTORY_LIMIT,
@@ -506,8 +507,16 @@ export class ChatService {
       throw new BadRequestException('Cannot send messages to yourself.');
     }
 
-    const trimmed = (content || '').trim();
-    if (!trimmed) {
+    if (typeof content !== 'string') {
+      throw new BadRequestException('Message content must be a string.');
+    }
+
+    if (content.length > 2000) {
+      throw new BadRequestException('Message content cannot exceed 2000 characters.');
+    }
+
+    const cleanContent = sanitizeText(content, 2000);
+    if (!cleanContent) {
       throw new BadRequestException('Message content cannot be empty.');
     }
 
@@ -596,7 +605,7 @@ export class ChatService {
       data: {
         senderId,
         receiverId,
-        content: trimmed,
+        content: cleanContent,
       },
       include: {
         sender: {
@@ -638,7 +647,7 @@ export class ChatService {
       receiverId,
       senderId,
       senderName,
-      trimmed,
+      cleanContent,
     );
 
     return message;

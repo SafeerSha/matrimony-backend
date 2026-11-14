@@ -7,6 +7,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { ChatHistoryQueryDto } from './dto/chat-history-query.dto';
 import { ReactMessageDto } from './dto/reaction.dto';
+import { SendMessageDto } from './dto/send-message.dto';
 
 @ApiTags('Chat')
 @ApiBearerAuth('JWT-auth')
@@ -58,7 +59,7 @@ export class ChatController {
   @RequirePermit()
   async sendMessageHttp(
     @CurrentUser() user: any,
-    @Body() body: { receiverId: string; content: string }
+    @Body() body: SendMessageDto,
   ) {
     return this.chatService.sendMessage(user.sub, body.receiverId, body.content);
   }
