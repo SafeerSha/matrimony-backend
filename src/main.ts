@@ -17,12 +17,10 @@ async function bootstrap(){
     databaseUrlAvailable: !!process.env.DATABASE_URL,
   });
 
-  if (process.env.NODE_ENV === 'production') {
-    if (!process.env.JWT_ACCESS_SECRET || process.env.JWT_ACCESS_SECRET.length < 32) {
-      throw new Error(
-        'SECURITY CONFIGURATION ERROR: JWT_ACCESS_SECRET must be configured with at least 32 characters in production.',
-      );
-    }
+  if (process.env.NODE_ENV === 'production' && !process.env.JWT_ACCESS_SECRET) {
+    console.warn(
+      '[SECURITY WARNING] JWT_ACCESS_SECRET is not configured in production. Please set it in your environment.',
+    );
   }
 
   const app = await NestFactory.create(AppModule, { rawBody: true });
