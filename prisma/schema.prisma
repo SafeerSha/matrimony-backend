@@ -21,6 +21,7 @@ model User {
   status             String         @default("DRAFT") // 'DRAFT', 'PENDING_VERIFICATION', 'ACTIVE', 'SUSPENDED', 'DEACTIVATED', 'DELETED'
   deactivatedAt      DateTime?
   deletedAt          DateTime?
+  deletedBy          String?        // 'USER', 'ADMIN'
   deletionReason     String?
   subscriptionTier   String         @default("BASIC") // 'BASIC', 'PAID'
   firstName          String?

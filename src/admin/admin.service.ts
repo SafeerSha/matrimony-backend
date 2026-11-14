@@ -27,6 +27,7 @@ const USER_LIST_SELECT = {
   status: true,
   deactivatedAt: true,
   deletedAt: true,
+  deletedBy: true,
   deletionReason: true,
   subscriptionTier: true,
   isBanned: true,
@@ -406,12 +407,28 @@ export class AdminService {
       }
     }
 
-    // Cascade delete user in database
-    await this.prisma.user.delete({ where: { id: userId } });
+    // Delete photo records
+    await this.prisma.photo.deleteMany({ where: { userId } });
+
+    // Soft delete & permanently block: keep user record so email & phone are blocked from login and re-registration
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        status: 'DELETED',
+        deletedAt: new Date(),
+        deletedBy: 'ADMIN',
+        deletionReason: 'Account terminated by administrator',
+        isBanned: true,
+        hashedRefreshToken: null,
+      },
+    });
+
+    // Invalidate device sessions
+    await this.prisma.userDevice.deleteMany({ where: { userId } });
 
     return {
       success: true,
-      message: `User ${userId} and all related records have been permanently purged.`,
+      message: `User ${userId} has been terminated by administrator. Login and registration are permanently blocked.`,
     };
   }
 

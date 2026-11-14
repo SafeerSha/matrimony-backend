@@ -42,6 +42,66 @@ const AUTH_PROFILE_SELECT = {
   onboardingStep: true,
 } as const;
 
+export const COOLING_OFF_PERIOD_DAYS = 30;
+export const COOLING_OFF_PERIOD_MS = COOLING_OFF_PERIOD_DAYS * 24 * 60 * 60 * 1000;
+
+export interface CoolingOffCheckResult {
+  isBlocked: boolean;
+  reason: 'ADMIN_TERMINATED' | 'COOLING_OFF_ACTIVE' | 'COOLING_OFF_EXPIRED' | null;
+  message?: string;
+  remainingDays?: number;
+  expiresAtFormatted?: string;
+}
+
+export function checkDeletedUserStatus(user: {
+  status?: string | null;
+  deletedAt?: Date | string | null;
+  deletedBy?: string | null;
+  isBanned?: boolean | null;
+}): CoolingOffCheckResult {
+  if (user.status !== 'DELETED' && !user.deletedAt) {
+    return { isBlocked: false, reason: null };
+  }
+
+  // 1. Admin terminated accounts: permanently blocked from login & new registration
+  if (user.deletedBy === 'ADMIN' || user.isBanned) {
+    return {
+      isBlocked: true,
+      reason: 'ADMIN_TERMINATED',
+      message: 'This account was terminated by an administrator. Login and registration are permanently blocked.',
+    };
+  }
+
+  // 2. User-initiated deletion with cooling-off period
+  const deletedTime = user.deletedAt ? new Date(user.deletedAt).getTime() : Date.now();
+  const elapsed = Date.now() - deletedTime;
+
+  if (elapsed < COOLING_OFF_PERIOD_MS) {
+    const remainingDays = Math.max(1, Math.ceil((COOLING_OFF_PERIOD_MS - elapsed) / (24 * 60 * 60 * 1000)));
+    const expiryDate = new Date(deletedTime + COOLING_OFF_PERIOD_MS);
+    const expiresAtFormatted = expiryDate.toLocaleDateString('en-GB', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+
+    return {
+      isBlocked: true,
+      reason: 'COOLING_OFF_ACTIVE',
+      remainingDays,
+      expiresAtFormatted,
+      message: `Your account was deleted and is currently in a 30-day cooling-off period until ${expiresAtFormatted} (${remainingDays} ${remainingDays === 1 ? 'day' : 'days'} remaining). You can create a new profile with the same details after this date.`,
+    };
+  }
+
+  // 3. Cooling-off period has expired!
+  return {
+    isBlocked: false,
+    reason: 'COOLING_OFF_EXPIRED',
+    message: 'Cooling-off period has expired. User can register a fresh account with the same details.',
+  };
+}
+
 @Injectable()
 export class AuthService implements OnModuleDestroy {
   private readonly logger = new Logger(AuthService.name);
@@ -302,87 +362,116 @@ export class AuthService implements OnModuleDestroy {
     }) : null;
 
     if (existingUser) {
-      if (existingUser.status === 'ACTIVE' || existingUser.status === 'PENDING_VERIFICATION') {
-        throw new ConflictException({
-          code: 'ACCOUNT_EXISTS',
-          message: 'An account with this email/phone already exists. Please log in.',
+      const statusCheck = checkDeletedUserStatus(existingUser);
+      if (statusCheck.isBlocked) {
+        if (statusCheck.reason === 'ADMIN_TERMINATED') {
+          throw new ForbiddenException(statusCheck.message);
+        }
+        if (statusCheck.reason === 'COOLING_OFF_ACTIVE') {
+          throw new ConflictException({
+            code: 'COOLING_OFF_ACTIVE',
+            message: statusCheck.message,
+            remainingDays: statusCheck.remainingDays,
+            expiresAt: statusCheck.expiresAtFormatted,
+          });
+        }
+      }
+
+      if (statusCheck.reason === 'COOLING_OFF_EXPIRED') {
+        // Cooling-off period has passed: archive the old deleted user record to free up the email & phone
+        const archiveTs = Date.now();
+        await this.prisma.user.update({
+          where: { id: existingUser.id },
+          data: {
+            email: existingUser.email ? `archived_${archiveTs}_${existingUser.email}` : null,
+            phone: existingUser.phone ? `archived_${archiveTs}_${existingUser.phone}` : null,
+            profileId: existingUser.profileId ? `archived_${archiveTs}_${existingUser.profileId}` : null,
+          },
         });
-      }
-
-      if (existingUser.status === 'SUSPENDED' || existingUser.isBanned) {
-        throw new UnauthorizedException('This account has been suspended. Please contact support.');
-      }
-
-      if (existingUser.status === 'DRAFT') {
-        // If email was provided now and wasn't set earlier on this draft, attach it
-        if (normalizedEmail && !existingUser.email) {
-          await this.prisma.user.update({
-            where: { id: existingUser.id },
-            data: { email: normalizedEmail },
-          });
-          existingUser.email = normalizedEmail;
-        }
-
-        // Resuming existing draft
-        const sessionId = crypto.randomUUID();
-        const tokens = await this.getTokens(existingUser.id, existingUser.email, existingUser.role, sessionId, existingUser.status);
-        await this.updateRefreshToken(existingUser.id, tokens.refreshToken, sessionId, deviceInfo);
-
-        let profile = existingUser.profile;
-        if (!profile) {
-          profile = await this.prisma.profile.create({
-            data: {
-              userId: existingUser.id,
-              firstName: firstName || existingUser.firstName,
-              lastName: lastName || existingUser.lastName,
-              gender: dto.gender,
-              profileFor,
-              category,
-              lookingFor: dto.lookingFor,
-              lookingIn: dto.lookingIn || dto.community,
-              community: dto.community || dto.lookingIn,
-              onboardingStep: 1,
-            },
-          });
-        } else {
-          // Update draft fields if newly provided
-          profile = await this.prisma.profile.update({
-            where: { id: profile.id },
-            data: {
-              firstName: firstName || profile.firstName,
-              lastName: lastName || profile.lastName,
-              gender: dto.gender || profile.gender,
-              lookingIn: dto.lookingIn || profile.lookingIn,
-              community: dto.community || profile.community,
-              category: category || profile.category,
-              profileFor: profileFor || profile.profileFor,
-              ...(dto.lookingFor ? { lookingFor: dto.lookingFor } : {}),
-            },
+        // Proceed down to create fresh user and profile with the requested details
+      } else {
+        if (existingUser.status === 'ACTIVE' || existingUser.status === 'PENDING_VERIFICATION') {
+          throw new ConflictException({
+            code: 'ACCOUNT_EXISTS',
+            message: 'An account with this email/phone already exists. Please log in.',
           });
         }
 
-        return {
-          success: true,
-          accessToken: tokens.accessToken,
-          refreshToken: tokens.refreshToken,
-          user: {
-            id: existingUser.id,
-            email: existingUser.email,
-            phone: existingUser.phone,
-            status: existingUser.status,
-            role: existingUser.role,
-          },
-          profile: {
-            id: profile.id,
-            firstName: profile.firstName || existingUser.firstName || 'User',
-            lastName: profile.lastName || existingUser.lastName || '',
-            gender: profile.gender,
-            profileFor: profile.profileFor || profile.category || 'Marriage',
-            category: profile.category,
-            lookingIn: profile.lookingIn,
-            onboardingStep: profile.onboardingStep,
-          },
-        };
+        if (existingUser.status === 'SUSPENDED' || existingUser.isBanned) {
+          throw new UnauthorizedException('This account has been suspended. Please contact support.');
+        }
+
+        if (existingUser.status === 'DRAFT') {
+          // If email was provided now and wasn't set earlier on this draft, attach it
+          if (normalizedEmail && !existingUser.email) {
+            await this.prisma.user.update({
+              where: { id: existingUser.id },
+              data: { email: normalizedEmail },
+            });
+            existingUser.email = normalizedEmail;
+          }
+
+          // Resuming existing draft
+          const sessionId = crypto.randomUUID();
+          const tokens = await this.getTokens(existingUser.id, existingUser.email, existingUser.role, sessionId, existingUser.status);
+          await this.updateRefreshToken(existingUser.id, tokens.refreshToken, sessionId, deviceInfo);
+
+          let profile = existingUser.profile;
+          if (!profile) {
+            profile = await this.prisma.profile.create({
+              data: {
+                userId: existingUser.id,
+                firstName: firstName || existingUser.firstName,
+                lastName: lastName || existingUser.lastName,
+                gender: dto.gender,
+                profileFor,
+                category,
+                lookingFor: dto.lookingFor,
+                lookingIn: dto.lookingIn || dto.community,
+                community: dto.community || dto.lookingIn,
+                onboardingStep: 1,
+              },
+            });
+          } else {
+            // Update draft fields if newly provided
+            profile = await this.prisma.profile.update({
+              where: { id: profile.id },
+              data: {
+                firstName: firstName || profile.firstName,
+                lastName: lastName || profile.lastName,
+                gender: dto.gender || profile.gender,
+                lookingIn: dto.lookingIn || profile.lookingIn,
+                community: dto.community || profile.community,
+                category: category || profile.category,
+                profileFor: profileFor || profile.profileFor,
+                ...(dto.lookingFor ? { lookingFor: dto.lookingFor } : {}),
+              },
+            });
+          }
+
+          return {
+            success: true,
+            accessToken: tokens.accessToken,
+            refreshToken: tokens.refreshToken,
+            user: {
+              id: existingUser.id,
+              email: existingUser.email,
+              phone: existingUser.phone,
+              status: existingUser.status,
+              role: existingUser.role,
+            },
+            profile: {
+              id: profile.id,
+              firstName: profile.firstName || existingUser.firstName || 'User',
+              lastName: profile.lastName || existingUser.lastName || '',
+              gender: profile.gender,
+              profileFor: profile.profileFor || profile.category || 'Marriage',
+              category: profile.category,
+              lookingIn: profile.lookingIn,
+              onboardingStep: profile.onboardingStep,
+            },
+          };
+        }
       }
     }
 
@@ -453,7 +542,34 @@ export class AuthService implements OnModuleDestroy {
   async register(dto: RegisterDto, deviceInfo?: ParsedDeviceInfo) {
     const existingUser = await this.usersService.findByEmail(dto.email);
     if (existingUser) {
-      throw new ConflictException('Email already in use');
+      const statusCheck = checkDeletedUserStatus(existingUser);
+      if (statusCheck.isBlocked) {
+        if (statusCheck.reason === 'ADMIN_TERMINATED') {
+          throw new ForbiddenException(statusCheck.message);
+        }
+        if (statusCheck.reason === 'COOLING_OFF_ACTIVE') {
+          throw new ConflictException({
+            code: 'COOLING_OFF_ACTIVE',
+            message: statusCheck.message,
+            remainingDays: statusCheck.remainingDays,
+            expiresAt: statusCheck.expiresAtFormatted,
+          });
+        }
+      }
+
+      if (statusCheck.reason === 'COOLING_OFF_EXPIRED') {
+        const archiveTs = Date.now();
+        await this.prisma.user.update({
+          where: { id: existingUser.id },
+          data: {
+            email: `archived_${archiveTs}_${existingUser.email}`,
+            phone: existingUser.phone ? `archived_${archiveTs}_${existingUser.phone}` : null,
+            profileId: existingUser.profileId ? `archived_${archiveTs}_${existingUser.profileId}` : null,
+          },
+        });
+      } else {
+        throw new ConflictException('Email already in use');
+      }
     }
 
     const passwordHash = await argon2.hash(dto.password);
@@ -542,8 +658,53 @@ export class AuthService implements OnModuleDestroy {
       if (existingUser.status === 'SUSPENDED') {
         throw new UnauthorizedException('Account is suspended. Please contact support.');
       }
-      if (existingUser.status === 'DELETED') {
-        throw new ForbiddenException('This account has been deleted.');
+
+      const statusCheck = checkDeletedUserStatus(existingUser);
+      if (statusCheck.isBlocked) {
+        if (statusCheck.reason === 'ADMIN_TERMINATED') {
+          throw new ForbiddenException(statusCheck.message);
+        }
+        if (statusCheck.reason === 'COOLING_OFF_ACTIVE') {
+          throw new ForbiddenException({
+            code: 'COOLING_OFF_ACTIVE',
+            message: statusCheck.message,
+            remainingDays: statusCheck.remainingDays,
+            expiresAt: statusCheck.expiresAtFormatted,
+          });
+        }
+      }
+
+      if (statusCheck.reason === 'COOLING_OFF_EXPIRED') {
+        throw new NotFoundException({
+          code: 'COOLING_OFF_EXPIRED_PLEASE_REGISTER',
+          message: 'Your previous account was deleted and has completed its cooling-off period. Please use the Register tab to create a new profile.',
+        });
+      }
+    }
+
+    if (dto.purpose === 'registration' || dto.purpose === 'register') {
+      const userWhere = normalizedEmail ? { email: normalizedEmail } : { phone: normalizedPhone! };
+      const existingUser = await this.prisma.user.findFirst({
+        where: userWhere,
+      });
+      if (existingUser) {
+        const statusCheck = checkDeletedUserStatus(existingUser);
+        if (statusCheck.isBlocked) {
+          if (statusCheck.reason === 'ADMIN_TERMINATED') {
+            throw new ForbiddenException(statusCheck.message);
+          }
+          if (statusCheck.reason === 'COOLING_OFF_ACTIVE') {
+            throw new ConflictException({
+              code: 'COOLING_OFF_ACTIVE',
+              message: statusCheck.message,
+              remainingDays: statusCheck.remainingDays,
+              expiresAt: statusCheck.expiresAtFormatted,
+            });
+          }
+        }
+        if (existingUser.status === 'ACTIVE' || existingUser.status === 'PENDING_VERIFICATION') {
+          throw new ConflictException('An account with this email/phone already exists. Please log in.');
+        }
       }
     }
 
@@ -739,31 +900,65 @@ export class AuthService implements OnModuleDestroy {
       if (user.status === 'SUSPENDED') {
         throw new UnauthorizedException('Account is suspended. Please contact support.');
       }
-      if (user.status === 'DELETED') {
-        throw new ForbiddenException('This account has been deleted.');
+      const statusCheck = checkDeletedUserStatus(user);
+      if (statusCheck.isBlocked) {
+        if (statusCheck.reason === 'ADMIN_TERMINATED') {
+          throw new ForbiddenException(statusCheck.message);
+        }
+        if (statusCheck.reason === 'COOLING_OFF_ACTIVE') {
+          throw new ForbiddenException({
+            code: 'COOLING_OFF_ACTIVE',
+            message: statusCheck.message,
+            remainingDays: statusCheck.remainingDays,
+            expiresAt: statusCheck.expiresAtFormatted,
+          });
+        }
       }
 
-      const wasDeactivated = user.status === 'DEACTIVATED';
-      user = await this.prisma.user.update({
-        where: { id: user.id },
-        data: {
-          isPhoneVerified: normalizedPhone ? true : user.isPhoneVerified,
-          isEmailVerified: normalizedEmail ? true : user.isEmailVerified,
-          ...(wasDeactivated
-            ? {
-                status: 'ACTIVE',
-                deactivatedAt: null,
-                deletionReason: null,
-              }
-            : {}),
-        },
-        include: {
-          profile: {
-            select: AUTH_PROFILE_SELECT,
+      if (statusCheck.reason === 'COOLING_OFF_EXPIRED') {
+        if (!allowCreate) {
+          throw new BadRequestException({
+            code: 'COOLING_OFF_EXPIRED_PLEASE_REGISTER',
+            message: 'Your previous account was deleted and has completed its cooling-off period. Please use the Register tab to create a new profile.',
+          });
+        }
+
+        // Archive old user record to free up unique phone/email
+        const archiveTs = Date.now();
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: {
+            email: user.email ? `archived_${archiveTs}_${user.email}` : null,
+            phone: user.phone ? `archived_${archiveTs}_${user.phone}` : null,
+            profileId: user.profileId ? `archived_${archiveTs}_${user.profileId}` : null,
           },
-        },
-      });
-    } else {
+        });
+        user = null; // Forces entering the new user creation branch below
+      } else {
+        const wasDeactivated = user.status === 'DEACTIVATED';
+        user = await this.prisma.user.update({
+          where: { id: user.id },
+          data: {
+            isPhoneVerified: normalizedPhone ? true : user.isPhoneVerified,
+            isEmailVerified: normalizedEmail ? true : user.isEmailVerified,
+            ...(wasDeactivated
+              ? {
+                  status: 'ACTIVE',
+                  deactivatedAt: null,
+                  deletionReason: null,
+                }
+              : {}),
+          },
+          include: {
+            profile: {
+              select: AUTH_PROFILE_SELECT,
+            },
+          },
+        });
+      }
+    }
+
+    if (!user) {
       if (!allowCreate) {
         throw new NotFoundException({
           code: 'ACCOUNT_NOT_FOUND',
@@ -903,8 +1098,26 @@ export class AuthService implements OnModuleDestroy {
       throw new UnauthorizedException('Account is suspended. Please contact support.');
     }
 
-    if (user.status === 'DELETED') {
-      throw new ForbiddenException('This account has been deleted.');
+    const statusCheck = checkDeletedUserStatus(user);
+    if (statusCheck.isBlocked) {
+      if (statusCheck.reason === 'ADMIN_TERMINATED') {
+        throw new ForbiddenException(statusCheck.message);
+      }
+      if (statusCheck.reason === 'COOLING_OFF_ACTIVE') {
+        throw new ForbiddenException({
+          code: 'COOLING_OFF_ACTIVE',
+          message: statusCheck.message,
+          remainingDays: statusCheck.remainingDays,
+          expiresAt: statusCheck.expiresAtFormatted,
+        });
+      }
+    }
+
+    if (statusCheck.reason === 'COOLING_OFF_EXPIRED') {
+      throw new BadRequestException({
+        code: 'COOLING_OFF_EXPIRED_PLEASE_REGISTER',
+        message: 'Your previous account was deleted and has completed its cooling-off period. Please use the Register tab to create a new profile.',
+      });
     }
 
     const passwordMatches = await argon2.verify(user.passwordHash, dto.password);
