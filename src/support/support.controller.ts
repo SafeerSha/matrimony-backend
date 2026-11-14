@@ -37,7 +37,7 @@ export class SupportController {
 
   @Post('feedback')
   @UseGuards(OptionalJwtAuthGuard)
-  @ApiOperation({ summary: 'Submit user feedback, rating, bug report, or feature suggestion' })
+  @ApiOperation({ summary: 'Submit user feedback, rating, bug report, or feature suggestion (one-time per account)' })
   @ApiResponse({ status: 201, description: 'Feedback stored in database' })
   async createFeedback(
     @Body() dto: CreateFeedbackDto,
@@ -47,11 +47,24 @@ export class SupportController {
     return this.supportService.createFeedback(dto, userId);
   }
 
+  @Get('my-rating')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get the existing rating and feedback submitted by the authenticated user' })
+  @ApiResponse({ status: 200, description: 'User rating status' })
+  async getMyRating(@CurrentUser() user: any) {
+    const userId = user?.id || user?.sub;
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+    return this.supportService.getUserRating(userId);
+  }
+
   @Get('my-requests')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get all support inquiries and feedback submitted by the authenticated user' })
-  @ApiResponse({ status: 200, description: 'User support inquiries and feedback history with follow-up status' })
+  @ApiOperation({ summary: 'Get all support inquiries submitted by the authenticated user' })
+  @ApiResponse({ status: 200, description: 'User support inquiries history with follow-up status' })
   async getMyRequests(@CurrentUser() user: any) {
     const userId = user?.id || user?.sub;
     if (!userId) {

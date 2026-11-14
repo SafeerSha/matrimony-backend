@@ -1,5 +1,5 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { UnauthorizedException, ForbiddenException } from '@nestjs/common';
+import { UnauthorizedException, ForbiddenException, BadRequestException } from '@nestjs/common';
 
 jest.unstable_mockModule('../mail/mail.service', () => ({
   MailService: class MockMailService {
@@ -28,6 +28,7 @@ describe('SupportService', () => {
       },
       feedback: {
         create: jest.fn() as any,
+        findFirst: jest.fn() as any,
         findMany: jest.fn() as any,
       },
     };
@@ -64,13 +65,47 @@ describe('SupportService', () => {
     expect(mailService.sendSupportNotification).toHaveBeenCalled();
   });
 
-  it('should fetch unified user requests belonging strictly to the user', async () => {
+  it('should prevent user from rating more than once', async () => {
+    prisma.feedback.findFirst.mockResolvedValue({
+      id: 'fb-1',
+      rating: 5,
+      type: 'general',
+      message: 'Awesome service',
+    });
+
+    await expect(
+      service.createFeedback(
+        {
+          rating: 4,
+          type: 'general',
+          message: 'trying to rate again',
+        },
+        'user-1',
+      ),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('should retrieve existing rating for user', async () => {
+    prisma.feedback.findFirst.mockResolvedValue({
+      id: 'fb-1',
+      rating: 4,
+      type: 'general',
+      message: 'Great app',
+      createdAt: new Date(),
+    });
+
+    const res = await service.getUserRating('user-1');
+    expect(res.hasRated).toBe(true);
+    expect(res.rating).toBe(4);
+  });
+
+  it('should fetch ONLY support inquiries in requests (no ratings/feedback)', async () => {
     prisma.user.findUnique.mockResolvedValue({ id: 'user-1', email: 'user1@example.com' });
     prisma.supportInquiry.findMany.mockResolvedValue([
       {
         id: 'inq-1',
-        topic: 'General Inquiry',
-        message: 'How do I change my city?',
+        topic: 'Billing & Premium',
+        message: 'How do I cancel my subscription?',
         status: 'OPEN',
         response: null,
         resolvedAt: null,
@@ -78,30 +113,16 @@ describe('SupportService', () => {
         updatedAt: new Date('2026-11-14T10:00:00Z'),
       },
     ]);
-    prisma.feedback.findMany.mockResolvedValue([
-      {
-        id: 'fb-1',
-        type: 'bug',
-        rating: 4,
-        message: 'Found a small display glitch on profile view',
-        status: 'IN_REVIEW',
-        priority: 'MEDIUM',
-        rmNotes: 'Investigating with engineering team',
-        reviewedAt: new Date('2026-11-14T12:00:00Z'),
-        createdAt: new Date('2026-11-14T11:00:00Z'),
-        updatedAt: new Date('2026-11-14T12:00:00Z'),
-      },
-    ]);
 
     const res = await service.getUserRequests('user-1');
 
     expect(res.success).toBe(true);
-    expect(res.summary.total).toBe(2);
-    expect(res.summary.active).toBe(2);
-    expect(res.requests.length).toBe(2);
-    expect(res.requests[0].id).toBe('fb-1'); // newer first
-    expect(res.requests[0].response).toBe('Investigating with engineering team');
-    expect(res.requests[1].id).toBe('inq-1');
+    expect(res.summary.total).toBe(1);
+    expect(res.requests.length).toBe(1);
+    expect(res.requests[0].id).toBe('inq-1');
+    expect(res.requests[0].type).toBe('INQUIRY');
+    // Verify prisma.feedback was NOT queried in getUserRequests
+    expect(prisma.feedback.findMany).not.toHaveBeenCalled();
   });
 
   it('should throw UnauthorizedException if userId is missing', async () => {
@@ -153,6 +174,7 @@ describe('SupportController', () => {
       createInquiry: jest.fn() as any,
       createFeedback: jest.fn() as any,
       getUserRequests: jest.fn() as any,
+      getUserRating: jest.fn() as any,
       closeUserInquiry: jest.fn() as any,
     };
 
@@ -161,6 +183,13 @@ describe('SupportController', () => {
 
   it('should require authentication for getMyRequests', async () => {
     await expect(controller.getMyRequests(null)).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('should delegate getMyRating to service for authenticated user', async () => {
+    service.getUserRating.mockResolvedValue({ hasRated: true, rating: 5 });
+    const res = await controller.getMyRating({ sub: 'user-123' });
+    expect(res.hasRated).toBe(true);
+    expect(service.getUserRating).toHaveBeenCalledWith('user-123');
   });
 
   it('should delegate getMyRequests to service for authenticated user', async () => {
