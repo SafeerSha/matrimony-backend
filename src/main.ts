@@ -1,9 +1,12 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import express from 'express';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { SanitizeInterceptor } from './common/interceptors/sanitize.interceptor';
+import { GlobalHttpExceptionFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap(){
 
@@ -14,9 +17,24 @@ async function bootstrap(){
     databaseUrlAvailable: !!process.env.DATABASE_URL,
   });
 
+  if (process.env.NODE_ENV === 'production') {
+    if (!process.env.JWT_ACCESS_SECRET || process.env.JWT_ACCESS_SECRET.length < 32) {
+      throw new Error(
+        'SECURITY CONFIGURATION ERROR: JWT_ACCESS_SECRET must be configured with at least 32 characters in production.',
+      );
+    }
+  }
+
   const app = await NestFactory.create(AppModule, { rawBody: true });
   const expressApp = app.getHttpAdapter().getInstance();
   expressApp.set('trust proxy', true);
+
+  // Disable fingerprinting header
+  expressApp.disable('x-powered-by');
+
+  // Enforce explicit payload body size limits to prevent memory exhaustion / DoS
+  app.use(express.json({ limit: '1mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
   app.setGlobalPrefix(process.env.API_PREFIX || 'api/v1');
   app.use(
@@ -24,12 +42,25 @@ async function bootstrap(){
       contentSecurityPolicy: {
         directives: {
           ...helmet.contentSecurityPolicy.getDefaultDirectives(),
-          'script-src': ["'self'", "'unsafe-inline'", 'https:'],
-          'style-src': ["'self'", "'unsafe-inline'", 'https:'],
+          'default-src': ["'self'"],
+          'script-src': ["'self'", "'unsafe-inline'", 'https://sdk.cashfree.com'],
+          'style-src': ["'self'", "'unsafe-inline'"],
           'img-src': ["'self'", 'data:', 'https:', 'blob:'],
+          'connect-src': ["'self'", 'https:', 'wss:'],
+          'frame-ancestors': ["'none'"],
+          'object-src': ["'none'"],
         },
       },
       crossOriginEmbedderPolicy: false,
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+      hsts: {
+        maxAge: 31536000,
+        includeSubDomains: true,
+        preload: true,
+      },
+      frameguard: { action: 'deny' },
+      noSniff: true,
+      referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
     }),
   );
   app.use(cookieParser());
@@ -40,7 +71,7 @@ async function bootstrap(){
 
   app.enableCors({
     origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-      // Allow requests with no origin (mobile apps, server-to-server, curl)
+      // Allow requests with no origin (mobile apps, server-to-server, health checks)
       if (!origin) return callback(null, true);
 
       const lowerOrigin = origin.toLowerCase().trim();
@@ -50,14 +81,25 @@ async function bootstrap(){
         return callback(null, true);
       }
 
-      // Always allow primary domain and all subdomains (e.g. ishtamchat.com, www.ishtamchat.com, api.ishtamchat.com)
-      if (/^https?:\/\/([a-z0-9-]+\.)*ishtamchat\.com(:[0-9]+)?$/i.test(lowerOrigin)) {
-        return callback(null, true);
-      }
+      // Safe domain parsing without regex backtracking (ReDoS prevention)
+      try {
+        const parsedUrl = new URL(lowerOrigin);
+        const hostname = parsedUrl.hostname.toLowerCase();
 
-      // Allow Vercel preview and production deployments
-      if (/^https?:\/\/([a-z0-9-]+\.)*vercel\.app(:[0-9]+)?$/i.test(lowerOrigin)) {
-        return callback(null, true);
+        // Always allow primary domain and verified subdomains of ishtamchat.com
+        if (hostname === 'ishtamchat.com' || hostname.endsWith('.ishtamchat.com')) {
+          return callback(null, true);
+        }
+
+        // Allow verified IshtamChat Vercel deployments (prevents rogue 3rd-party vercel apps)
+        if (
+          (hostname.startsWith('ishtamchat') || hostname.startsWith('matrimony-web-')) &&
+          hostname.endsWith('.vercel.app')
+        ) {
+          return callback(null, true);
+        }
+      } catch {
+        return callback(null, false);
       }
 
       // Interchangeably match apex and www for any configured origin (e.g. www.domain.com <-> domain.com)
@@ -97,10 +139,18 @@ async function bootstrap(){
       'baggage',
     ],
   });
+
+  // Global Input Sanitization: automatically sanitizes all request bodies, queries, and params
+  app.useGlobalInterceptors(new SanitizeInterceptor());
+
+  // Global Exception Filter: prevents internal errors, SQL errors, or stack traces from leaking to clients
+  app.useGlobalFilters(new GlobalHttpExceptionFilter());
+
   app.useGlobalPipes(new ValidationPipe({
     whitelist: true,
     forbidNonWhitelisted: false,
     transform: true,
+    transformOptions: { enableImplicitConversion: true },
   }));
 
   // Bind root '/' on http adapter so requests to either '/' or '/api/v1' succeed
@@ -138,21 +188,26 @@ async function bootstrap(){
     })
     .build();
 
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('api/docs', app, document, {
-    customSiteTitle: 'Matrimony API Documentation',
-    swaggerOptions: {
-      persistAuthorization: true,
-      docExpansion: 'none',
-      filter: true,
-    },
-  });
+  const isSwaggerEnabled = process.env.NODE_ENV !== 'production' || process.env.ENABLE_SWAGGER === 'true';
+  if (isSwaggerEnabled) {
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('api/docs', app, document, {
+      customSiteTitle: 'Matrimony API Documentation',
+      swaggerOptions: {
+        persistAuthorization: true,
+        docExpansion: 'none',
+        filter: true,
+      },
+    });
+  }
 
   const port = Number(process.env.PORT || 4000);
   await app.init();
   await app.listen(port);
   console.log(`Application running on http://127.0.0.1:${port}/${process.env.API_PREFIX || 'api/v1'}`);
-  console.log(`Swagger documentation available at http://0.0.0.0:${port}/api/docs`);
+  if (isSwaggerEnabled) {
+    console.log(`Swagger documentation available at http://0.0.0.0:${port}/api/docs`);
+  }
 
   // Enable graceful shutdown hooks (SIGTERM/SIGINT).
   // Triggers onModuleDestroy on all providers (PrismaService.$disconnect, ChatGateway cleanup).

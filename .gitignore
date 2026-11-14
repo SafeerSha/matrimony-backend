@@ -1,6 +1,38 @@
+# Dependencies
 node_modules/
+
+# Build Output
 dist/
-.env
+build/
 coverage/
-*.log
 *.tsbuildinfo
+
+# Secrets & Environment (CRITICAL)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+id_rsa*
+
+# Database Backups & Dumps
+backups/
+*.sql
+*.dump
+*.bak
+
+# User Uploads
+uploads/
+.temp/
+
+# Logs & Diagnostics
+*.log
+npm-debug.log*
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+.agents/
+.kilo/
+brain/

@@ -51,10 +51,10 @@ export class AuthController {
   @Throttle({ default: { limit: OTP_LIMIT, ttl: OTP_TTL } })
   @Post('send-email-otp')
   async sendEmailOtp(@Body() dto: { email?: string }) {
-    return {
-      message: `Verification code sent successfully to ${dto.email || 'your email'}`,
-      defaultOtp: '123456',
-    };
+    if (!dto?.email) {
+      return { message: 'A valid email is required' };
+    }
+    return this.authService.sendOtp({ email: dto.email, purpose: 'LOGIN' });
   }
 
   @Throttle({ default: { limit: VERIFY_LIMIT, ttl: VERIFY_TTL } })
