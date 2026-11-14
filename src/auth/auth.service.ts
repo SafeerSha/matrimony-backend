@@ -53,12 +53,16 @@ export interface CoolingOffCheckResult {
   expiresAtFormatted?: string;
 }
 
-export function checkDeletedUserStatus(user: {
-  status?: string | null;
-  deletedAt?: Date | string | null;
-  deletedBy?: string | null;
-  isBanned?: boolean | null;
-}): CoolingOffCheckResult {
+export function checkDeletedUserStatus(
+  user: {
+    status?: string | null;
+    deletedAt?: Date | string | null;
+    deletedBy?: string | null;
+    isBanned?: boolean | null;
+  },
+  coolingOffEnabled: boolean = true,
+  coolingPeriodDays: number = 30,
+): CoolingOffCheckResult {
   if (user.status !== 'DELETED' && !user.deletedAt) {
     return { isBlocked: false, reason: null };
   }
@@ -72,13 +76,24 @@ export function checkDeletedUserStatus(user: {
     };
   }
 
-  // 2. User-initiated deletion with cooling-off period
+  // 2. If platform cooling-off period restriction is toggled OFF:
+  // User who deleted their own account can recreate/rejoin immediately!
+  if (!coolingOffEnabled) {
+    return {
+      isBlocked: false,
+      reason: 'COOLING_OFF_EXPIRED',
+      message: 'Cooling-off period restriction is currently disabled by administrator. Rejoin allowed immediately.',
+    };
+  }
+
+  // 3. User-initiated deletion with cooling-off period
+  const coolingPeriodMs = Math.max(1, coolingPeriodDays) * 24 * 60 * 60 * 1000;
   const deletedTime = user.deletedAt ? new Date(user.deletedAt).getTime() : Date.now();
   const elapsed = Date.now() - deletedTime;
 
-  if (elapsed < COOLING_OFF_PERIOD_MS) {
-    const remainingDays = Math.max(1, Math.ceil((COOLING_OFF_PERIOD_MS - elapsed) / (24 * 60 * 60 * 1000)));
-    const expiryDate = new Date(deletedTime + COOLING_OFF_PERIOD_MS);
+  if (elapsed < coolingPeriodMs) {
+    const remainingDays = Math.max(1, Math.ceil((coolingPeriodMs - elapsed) / (24 * 60 * 60 * 1000)));
+    const expiryDate = new Date(deletedTime + coolingPeriodMs);
     const expiresAtFormatted = expiryDate.toLocaleDateString('en-GB', {
       day: 'numeric',
       month: 'short',
@@ -90,11 +105,11 @@ export function checkDeletedUserStatus(user: {
       reason: 'COOLING_OFF_ACTIVE',
       remainingDays,
       expiresAtFormatted,
-      message: `Your account was deleted and is currently in a 30-day cooling-off period until ${expiresAtFormatted} (${remainingDays} ${remainingDays === 1 ? 'day' : 'days'} remaining). You can create a new profile with the same details after this date.`,
+      message: `Your account was deleted and is currently in a ${coolingPeriodDays}-day cooling-off period until ${expiresAtFormatted} (${remainingDays} ${remainingDays === 1 ? 'day' : 'days'} remaining). You can create a new profile with the same details after this date.`,
     };
   }
 
-  // 3. Cooling-off period has expired!
+  // 4. Cooling-off period has expired!
   return {
     isBlocked: false,
     reason: 'COOLING_OFF_EXPIRED',
@@ -110,6 +125,7 @@ export class AuthService implements OnModuleDestroy {
   private readonly ACTIVITY_CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
   private readonly MAX_ACTIVITY_THROTTLE_ENTRIES = 10_000;
   private readonly activityCleanupTimer: ReturnType<typeof setInterval>;
+  private coolingPeriodCache: { enabled: boolean; days: number; expiresAt: number } | null = null;
 
   constructor(
     private usersService: UsersService,
@@ -130,6 +146,36 @@ export class AuthService implements OnModuleDestroy {
   onModuleDestroy(): void {
     clearInterval(this.activityCleanupTimer);
     this.activityThrottleMap.clear();
+  }
+
+  /**
+   * Retrieves the platform-level cooling-off configuration (cached for 5 seconds).
+   * If disabled, deleted users can immediately recreate their profile.
+   */
+  async getCoolingPeriodConfig(): Promise<{ enabled: boolean; days: number }> {
+    const now = Date.now();
+    if (this.coolingPeriodCache && this.coolingPeriodCache.expiresAt > now) {
+      return { enabled: this.coolingPeriodCache.enabled, days: this.coolingPeriodCache.days };
+    }
+
+    try {
+      if (!this.prisma?.platformSetting) {
+        return { enabled: true, days: 30 };
+      }
+
+      const [enabledSetting, daysSetting] = await Promise.all([
+        this.prisma.platformSetting.findUnique({ where: { key: 'COOLING_OFF_PERIOD_ENABLED' } }),
+        this.prisma.platformSetting.findUnique({ where: { key: 'COOLING_OFF_PERIOD_DAYS' } }),
+      ]);
+
+      const enabled = enabledSetting ? enabledSetting.value === 'true' : true;
+      const days = daysSetting ? parseInt(daysSetting.value, 10) || 30 : 30;
+
+      this.coolingPeriodCache = { enabled, days, expiresAt: now + 5000 };
+      return { enabled, days };
+    } catch {
+      return { enabled: true, days: 30 };
+    }
   }
 
   /**
@@ -362,7 +408,8 @@ export class AuthService implements OnModuleDestroy {
     }) : null;
 
     if (existingUser) {
-      const statusCheck = checkDeletedUserStatus(existingUser);
+      const { enabled: isCoolingEnabled, days: coolingDays } = await this.getCoolingPeriodConfig();
+      const statusCheck = checkDeletedUserStatus(existingUser, isCoolingEnabled, coolingDays);
       if (statusCheck.isBlocked) {
         if (statusCheck.reason === 'ADMIN_TERMINATED') {
           throw new ForbiddenException(statusCheck.message);
@@ -542,7 +589,8 @@ export class AuthService implements OnModuleDestroy {
   async register(dto: RegisterDto, deviceInfo?: ParsedDeviceInfo) {
     const existingUser = await this.usersService.findByEmail(dto.email);
     if (existingUser) {
-      const statusCheck = checkDeletedUserStatus(existingUser);
+      const { enabled: isCoolingEnabled, days: coolingDays } = await this.getCoolingPeriodConfig();
+      const statusCheck = checkDeletedUserStatus(existingUser, isCoolingEnabled, coolingDays);
       if (statusCheck.isBlocked) {
         if (statusCheck.reason === 'ADMIN_TERMINATED') {
           throw new ForbiddenException(statusCheck.message);
@@ -659,7 +707,8 @@ export class AuthService implements OnModuleDestroy {
         throw new UnauthorizedException('Account is suspended. Please contact support.');
       }
 
-      const statusCheck = checkDeletedUserStatus(existingUser);
+      const { enabled: isCoolingEnabled, days: coolingDays } = await this.getCoolingPeriodConfig();
+      const statusCheck = checkDeletedUserStatus(existingUser, isCoolingEnabled, coolingDays);
       if (statusCheck.isBlocked) {
         if (statusCheck.reason === 'ADMIN_TERMINATED') {
           throw new ForbiddenException(statusCheck.message);
@@ -688,7 +737,8 @@ export class AuthService implements OnModuleDestroy {
         where: userWhere,
       });
       if (existingUser) {
-        const statusCheck = checkDeletedUserStatus(existingUser);
+        const { enabled: isCoolingEnabled, days: coolingDays } = await this.getCoolingPeriodConfig();
+      const statusCheck = checkDeletedUserStatus(existingUser, isCoolingEnabled, coolingDays);
         if (statusCheck.isBlocked) {
           if (statusCheck.reason === 'ADMIN_TERMINATED') {
             throw new ForbiddenException(statusCheck.message);
@@ -900,7 +950,8 @@ export class AuthService implements OnModuleDestroy {
       if (user.status === 'SUSPENDED') {
         throw new UnauthorizedException('Account is suspended. Please contact support.');
       }
-      const statusCheck = checkDeletedUserStatus(user);
+      const { enabled: isCoolingEnabled, days: coolingDays } = await this.getCoolingPeriodConfig();
+      const statusCheck = checkDeletedUserStatus(user, isCoolingEnabled, coolingDays);
       if (statusCheck.isBlocked) {
         if (statusCheck.reason === 'ADMIN_TERMINATED') {
           throw new ForbiddenException(statusCheck.message);
@@ -1098,7 +1149,8 @@ export class AuthService implements OnModuleDestroy {
       throw new UnauthorizedException('Account is suspended. Please contact support.');
     }
 
-    const statusCheck = checkDeletedUserStatus(user);
+    const { enabled: isCoolingEnabled, days: coolingDays } = await this.getCoolingPeriodConfig();
+    const statusCheck = checkDeletedUserStatus(user, isCoolingEnabled, coolingDays);
     if (statusCheck.isBlocked) {
       if (statusCheck.reason === 'ADMIN_TERMINATED') {
         throw new ForbiddenException(statusCheck.message);

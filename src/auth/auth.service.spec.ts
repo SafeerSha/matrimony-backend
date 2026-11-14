@@ -252,6 +252,30 @@ describe('AuthService', () => {
 
       await expect(service.login(dto)).rejects.toThrow(BadRequestException);
     });
+
+    it('should bypass cooling-off block on login and prompt user to register if cooling-off period is disabled', async () => {
+      const dto = { identifier: 'recent_del@example.com', password: 'password123' };
+      const user = {
+        id: 'usr-recent-del',
+        email: 'recent_del@example.com',
+        passwordHash: 'hashedPassword',
+        isPasswordEnabled: true,
+        isBanned: false,
+        status: 'DELETED',
+        deletedBy: 'USER',
+        deletedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), // 2 days ago
+      };
+      mockUsersService.findByEmail.mockResolvedValue(user);
+      // Mock platform setting disabled
+      mockPrismaService.platformSetting = {
+        findUnique: jest.fn().mockImplementation(({ where }) => {
+          if (where.key === 'COOLING_OFF_PERIOD_ENABLED') return Promise.resolve({ value: 'false' });
+          return Promise.resolve(null);
+        }),
+      };
+
+      await expect(service.login(dto)).rejects.toThrow(BadRequestException);
+    });
   });
 
   describe('quickRegister', () => {
@@ -573,6 +597,66 @@ describe('AuthService', () => {
         include: { profile: expect.any(Object) },
       });
       expect(result.success).toBe(true);
+    });
+
+    it('should archive old soft-deleted user and allow immediate re-registration if cooling-off period is disabled', async () => {
+      const dto = {
+        name: 'Instant Rejoin User',
+        email: 'instant@example.com',
+        phone: '+919999977777',
+        gender: 'MALE',
+        profileFor: 'Myself',
+      };
+      const recentDeletedUser = {
+        id: 'usr-recent-del',
+        email: 'instant@example.com',
+        phone: '+919999977777',
+        profileId: 'LT-RECENT',
+        status: 'DELETED',
+        deletedBy: 'USER',
+        deletedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000), // Only 1 day ago
+      };
+      mockPrismaService.user.findFirst.mockResolvedValue(recentDeletedUser);
+      mockPrismaService.user.update.mockResolvedValue({});
+      mockUsersService.generateUniqueProfileId = jest.fn().mockResolvedValue('LT-INSTANT');
+
+      // Platform setting disabled
+      mockPrismaService.platformSetting = {
+        findUnique: jest.fn().mockImplementation(({ where }) => {
+          if (where.key === 'COOLING_OFF_PERIOD_ENABLED') return Promise.resolve({ value: 'false' });
+          return Promise.resolve(null);
+        }),
+      };
+
+      const mockCreatedUser = {
+        id: 'usr-instant-created',
+        email: 'instant@example.com',
+        phone: '+919999977777',
+        firstName: 'Instant',
+        lastName: 'User',
+        role: 'USER',
+        status: 'DRAFT',
+        profileId: 'LT-INSTANT',
+      };
+
+      mockPrismaService.$transaction.mockImplementation(async (cb: any) => {
+        return cb({
+          user: { create: jest.fn().mockResolvedValue(mockCreatedUser) },
+          profile: { create: jest.fn().mockResolvedValue({ id: 'prof-instant' }) },
+        });
+      });
+
+      const result = await service.quickRegister(dto);
+
+      expect(result.success).toBe(true);
+      expect(mockPrismaService.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'usr-recent-del' },
+          data: expect.objectContaining({
+            email: expect.stringContaining('archived_'),
+          }),
+        }),
+      );
     });
   });
 
