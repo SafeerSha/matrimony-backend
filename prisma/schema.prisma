@@ -438,3 +438,12 @@ model ProfileVisit {
   @@index([viewedUserId, visitedAt(sort: Desc)])
   @@index([visitorId])
 }
+
+model PlatformSetting {
+  key         String   @id
+  value       String
+  description String?
+  updatedAt   DateTime @updatedAt
+  updatedBy   String?
+}
+

@@ -45,6 +45,10 @@ describe('AdminService', () => {
     userDevice: {
       deleteMany: jest.fn<any>(),
     },
+    platformSetting: {
+      findUnique: jest.fn<any>(),
+      upsert: jest.fn<any>(),
+    },
     $transaction: jest.fn<any>(),
   };
 
@@ -595,6 +599,48 @@ describe('AdminService', () => {
       await expect(
         service.updateUser('rm-1', { email: 'taken@test.com' }),
       ).rejects.toThrow('An account with this email already exists.');
+    });
+  });
+
+  describe('getCoolingPeriodSetting / updateCoolingPeriodSetting', () => {
+    it('should return default enabled=true and days=30 when settings do not exist', async () => {
+      mockPrisma.platformSetting.findUnique.mockResolvedValue(null);
+
+      const result = await service.getCoolingPeriodSetting();
+
+      expect(result.enabled).toBe(true);
+      expect(result.days).toBe(30);
+    });
+
+    it('should return parsed database settings when they exist', async () => {
+      mockPrisma.platformSetting.findUnique.mockImplementation(({ where }) => {
+        if (where.key === 'COOLING_OFF_PERIOD_ENABLED') return Promise.resolve({ value: 'false' });
+        if (where.key === 'COOLING_OFF_PERIOD_DAYS') return Promise.resolve({ value: '14' });
+        return Promise.resolve(null);
+      });
+
+      const result = await service.getCoolingPeriodSetting();
+
+      expect(result.enabled).toBe(false);
+      expect(result.days).toBe(14);
+    });
+
+    it('should upsert platform settings and return updated values', async () => {
+      mockPrisma.platformSetting.upsert.mockResolvedValue({});
+      mockPrisma.$transaction.mockResolvedValue([]);
+      mockPrisma.platformSetting.findUnique.mockImplementation(({ where }) => {
+        if (where.key === 'COOLING_OFF_PERIOD_ENABLED') return Promise.resolve({ value: 'false' });
+        if (where.key === 'COOLING_OFF_PERIOD_DAYS') return Promise.resolve({ value: '7' });
+        return Promise.resolve(null);
+      });
+
+      const result = await service.updateCoolingPeriodSetting({ enabled: false, days: 7 }, 'admin-123');
+
+      expect(result.success).toBe(true);
+      expect(result.enabled).toBe(false);
+      expect(result.days).toBe(7);
+      expect(result.message).toContain('Cooling-off period restriction has been DISABLED');
+      expect(mockPrisma.$transaction).toHaveBeenCalled();
     });
   });
 });

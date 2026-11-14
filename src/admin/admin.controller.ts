@@ -18,6 +18,7 @@ import {
   AdminUpdateUserDto,
 } from './dto/user-query.dto';
 import { CreatePlanDto, UpdatePlanDto } from './dto/plan.dto';
+import { UpdateCoolingPeriodSettingDto } from './dto/platform-setting.dto';
 import { SubscriptionService } from '../subscription/subscription.service';
 import { ApiOperation } from '@nestjs/swagger';
 
@@ -188,5 +189,24 @@ export class AdminController {
   @ApiOperation({ summary: 'Delete a subscription plan' })
   async deletePlan(@Param('id') id: string) {
     return this.subscriptionService.deletePlan(id);
+  }
+
+  // ==========================================
+  // Platform Settings Endpoints
+  // ==========================================
+
+  @Get('settings/cooling-period')
+  @ApiOperation({ summary: 'Get current user deletion cooling-off period platform configuration' })
+  async getCoolingPeriodSetting() {
+    return this.adminService.getCoolingPeriodSetting();
+  }
+
+  @Patch('settings/cooling-period')
+  @ApiOperation({ summary: 'Update user deletion cooling-off period platform configuration (turn on/off)' })
+  async updateCoolingPeriodSetting(
+    @Body() body: UpdateCoolingPeriodSettingDto,
+    @CurrentUser() user: any,
+  ) {
+    return this.adminService.updateCoolingPeriodSetting(body, user?.id);
   }
 }

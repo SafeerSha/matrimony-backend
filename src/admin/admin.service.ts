@@ -17,6 +17,7 @@ import { UsersService } from '../users/users.service';
 import { normalizePhoneNumber } from '../common/utils/phone.util';
 import { sanitizeText } from '../common/utils/sanitize.util';
 import type { AdminUserQueryDto, AssignPlanBodyDto, CreateAdminUserDto, AdminResetPasswordDto, AdminUpdateUserDto } from './dto/user-query.dto';
+import type { UpdateCoolingPeriodSettingDto } from './dto/platform-setting.dto';
 
 /** Shared select for admin user list — never expose credential fields */
 const USER_LIST_SELECT = {
@@ -689,5 +690,66 @@ export class AdminService {
     });
 
     return { success: true, message: 'Photo rejected and deleted' };
+  }
+
+  async getCoolingPeriodSetting() {
+    const [enabledSetting, daysSetting] = await Promise.all([
+      this.prisma.platformSetting.findUnique({ where: { key: 'COOLING_OFF_PERIOD_ENABLED' } }),
+      this.prisma.platformSetting.findUnique({ where: { key: 'COOLING_OFF_PERIOD_DAYS' } }),
+    ]);
+
+    return {
+      enabled: enabledSetting ? enabledSetting.value === 'true' : true,
+      days: daysSetting ? parseInt(daysSetting.value, 10) || 30 : 30,
+      updatedAt: enabledSetting?.updatedAt || daysSetting?.updatedAt || new Date(),
+      updatedBy: enabledSetting?.updatedBy || daysSetting?.updatedBy || null,
+    };
+  }
+
+  async updateCoolingPeriodSetting(dto: UpdateCoolingPeriodSettingDto, adminId?: string) {
+    const updates: any[] = [
+      this.prisma.platformSetting.upsert({
+        where: { key: 'COOLING_OFF_PERIOD_ENABLED' },
+        create: {
+          key: 'COOLING_OFF_PERIOD_ENABLED',
+          value: String(dto.enabled),
+          description: 'Whether deleted user accounts must undergo a cooling-off period before re-registering',
+          updatedBy: adminId,
+        },
+        update: {
+          value: String(dto.enabled),
+          updatedBy: adminId,
+        },
+      }),
+    ];
+
+    if (dto.days !== undefined) {
+      updates.push(
+        this.prisma.platformSetting.upsert({
+          where: { key: 'COOLING_OFF_PERIOD_DAYS' },
+          create: {
+            key: 'COOLING_OFF_PERIOD_DAYS',
+            value: String(dto.days),
+            description: 'Duration in days for user deletion cooling-off period',
+            updatedBy: adminId,
+          },
+          update: {
+            value: String(dto.days),
+            updatedBy: adminId,
+          },
+        }),
+      );
+    }
+
+    await this.prisma.$transaction(updates);
+
+    const result = await this.getCoolingPeriodSetting();
+    return {
+      success: true,
+      message: dto.enabled
+        ? `Cooling-off period restriction has been ENABLED (${result.days} days required before rejoining).`
+        : 'Cooling-off period restriction has been DISABLED. Users can now rejoin and recreate profiles immediately.',
+      ...result,
+    };
   }
 }
