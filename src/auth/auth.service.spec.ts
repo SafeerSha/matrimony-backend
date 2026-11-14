@@ -201,6 +201,57 @@ describe('AuthService', () => {
       expect(mockUsersService.findByPhone).toHaveBeenCalledWith('+919876543210');
       expect(result.accessToken).toEqual('token');
     });
+
+    it('should throw ForbiddenException if user was terminated by ADMIN', async () => {
+      const dto = { identifier: 'admin_deleted@example.com', password: 'password123' };
+      const user = {
+        id: 'usr-admin-del',
+        email: 'admin_deleted@example.com',
+        passwordHash: 'hashedPassword',
+        isPasswordEnabled: true,
+        isBanned: true,
+        status: 'DELETED',
+        deletedBy: 'ADMIN',
+        deletedAt: new Date(),
+      };
+      mockUsersService.findByEmail.mockResolvedValue(user);
+
+      await expect(service.login(dto)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should throw ForbiddenException with COOLING_OFF_ACTIVE if user deleted own profile within 30 days', async () => {
+      const dto = { identifier: 'user_deleted@example.com', password: 'password123' };
+      const user = {
+        id: 'usr-user-del',
+        email: 'user_deleted@example.com',
+        passwordHash: 'hashedPassword',
+        isPasswordEnabled: true,
+        isBanned: false,
+        status: 'DELETED',
+        deletedBy: 'USER',
+        deletedAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000), // 5 days ago
+      };
+      mockUsersService.findByEmail.mockResolvedValue(user);
+
+      await expect(service.login(dto)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should prompt user to register if cooling-off period has expired upon login', async () => {
+      const dto = { identifier: 'expired_del@example.com', password: 'password123' };
+      const user = {
+        id: 'usr-expired-del',
+        email: 'expired_del@example.com',
+        passwordHash: 'hashedPassword',
+        isPasswordEnabled: true,
+        isBanned: false,
+        status: 'DELETED',
+        deletedBy: 'USER',
+        deletedAt: new Date(Date.now() - 35 * 24 * 60 * 60 * 1000), // 35 days ago
+      };
+      mockUsersService.findByEmail.mockResolvedValue(user);
+
+      await expect(service.login(dto)).rejects.toThrow(BadRequestException);
+    });
   });
 
   describe('quickRegister', () => {
@@ -298,10 +349,72 @@ describe('AuthService', () => {
         where: {
           OR: [{ phone: '+919876543210' }],
         },
-        include: { profile: true },
+        include: { profile: expect.any(Object) },
       });
       expect(result.user.email).toBeNull();
       expect(result.user.status).toBe('DRAFT');
+      expect(result.success).toBe(true);
+    });
+
+    it('should archive old soft-deleted user and allow new profile creation after cooling-off period expires', async () => {
+      const dto = {
+        name: 'Recreated User',
+        email: 'recreated@example.com',
+        phone: '+919999988888',
+        gender: 'FEMALE',
+        profileFor: 'Myself',
+      };
+      const oldDeletedUser = {
+        id: 'usr-old-del',
+        email: 'recreated@example.com',
+        phone: '+919999988888',
+        profileId: 'LT-OLD01',
+        status: 'DELETED',
+        deletedBy: 'USER',
+        deletedAt: new Date(Date.now() - 32 * 24 * 60 * 60 * 1000), // 32 days ago
+      };
+      mockPrismaService.user.findFirst.mockResolvedValue(oldDeletedUser);
+      mockPrismaService.user.update.mockResolvedValue({});
+      mockUsersService.generateUniqueProfileId = jest.fn().mockResolvedValue('LT-NEW01');
+
+      const mockCreatedUser = {
+        id: 'usr-new-created',
+        email: 'recreated@example.com',
+        phone: '+919999988888',
+        firstName: 'Recreated',
+        lastName: 'User',
+        role: 'USER',
+        status: 'DRAFT',
+        profileId: 'LT-NEW01',
+      };
+
+      const mockCreatedProfile = {
+        id: 'prof-new-1',
+        userId: 'usr-new-created',
+        firstName: 'Recreated',
+        lastName: 'User',
+        gender: 'FEMALE',
+        onboardingStep: 1,
+      };
+
+      mockPrismaService.$transaction.mockImplementation(async (cb: any) => {
+        return cb({
+          user: { create: jest.fn().mockResolvedValue(mockCreatedUser) },
+          profile: { create: jest.fn().mockResolvedValue(mockCreatedProfile) },
+        });
+      });
+
+      const result = await service.quickRegister(dto);
+
+      expect(mockPrismaService.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'usr-old-del' },
+          data: expect.objectContaining({
+            email: expect.stringContaining('archived_'),
+          }),
+        })
+      );
+      expect(result.user.email).toBe('recreated@example.com');
       expect(result.success).toBe(true);
     });
 
@@ -456,8 +569,8 @@ describe('AuthService', () => {
 
       expect(mockPrismaService.user.update).toHaveBeenCalledWith({
         where: { id: 'usr-exist' },
-        data: { isPhoneVerified: true },
-        include: { profile: true },
+        data: expect.objectContaining({ isPhoneVerified: true }),
+        include: { profile: expect.any(Object) },
       });
       expect(result.success).toBe(true);
     });

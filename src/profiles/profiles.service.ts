@@ -1,6 +1,7 @@
-import { BadRequestException, ConflictException, HttpException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, HttpException, Inject, Injectable, InternalServerErrorException, Logger, NotFoundException, Optional } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { STORAGE_SERVICE, StorageService } from '../storage/storage.interface';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpdatePreferencesDto, transformToStringOrCsv } from './dto/update-preferences.dto';
 import { sanitizeStringArray, sanitizeText } from '../common/utils/sanitize.util';
@@ -102,7 +103,10 @@ export function formatPreferencesObject(profilePrefs: any, tablePref: any) {
 export class ProfilesService {
   private readonly logger = new Logger(ProfilesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(STORAGE_SERVICE) @Optional() private readonly storageService?: StorageService,
+  ) {}
 
   async getProfile(userId: string) {
     const user = await this.prisma.user.findUnique({
@@ -1046,20 +1050,47 @@ export class ProfilesService {
   }
 
   async deleteAccount(userId: string, reason?: string, feedback?: string) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        photos: {
+          select: { id: true, url: true, objectKey: true, storageProvider: true },
+        },
+      },
+    });
     if (!user) throw new NotFoundException('User not found');
 
-    const combinedReason = [reason, feedback].filter(Boolean).join(' - ') || 'User requested account deletion';
+    const combinedReason = [reason, feedback].filter(Boolean).join(' - ') || 'Found match / Marriage fixed';
 
+    // Remove photos from physical storage
+    if (user.photos && user.photos.length > 0 && this.storageService) {
+      for (const photo of user.photos) {
+        try {
+          await this.storageService.deleteFile({
+            url: photo.url,
+            objectKey: photo.objectKey,
+            storageProvider: photo.storageProvider,
+          });
+        } catch {
+          // non-blocking
+        }
+      }
+    }
+
+    // Delete photo records from database
+    await this.prisma.photo.deleteMany({ where: { userId } });
+
+    // Soft delete user with status DELETED, deletedBy USER, deletionReason, and timestamp
     const updated = await this.prisma.user.update({
       where: { id: userId },
       data: {
         status: 'DELETED',
         deletedAt: new Date(),
+        deletedBy: 'USER',
         deletionReason: combinedReason,
         hashedRefreshToken: null,
       },
-      select: { id: true, status: true, deletedAt: true },
+      select: { id: true, status: true, deletedAt: true, deletionReason: true, deletedBy: true },
     });
 
     // Invalidate device sessions
@@ -1067,7 +1098,7 @@ export class ProfilesService {
 
     return {
       success: true,
-      message: 'Your account has been scheduled for deletion. Please contact support if you need to restore it.',
+      message: 'Your account has been deleted. A 30-day cooling-off period is in effect. You can create a new profile with the same details after this period.',
       status: updated.status,
     };
   }

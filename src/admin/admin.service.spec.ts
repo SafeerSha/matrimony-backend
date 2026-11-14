@@ -40,6 +40,10 @@ describe('AdminService', () => {
       findUnique: jest.fn<any>(),
       update: jest.fn<any>(),
       delete: jest.fn<any>(),
+      deleteMany: jest.fn<any>(),
+    },
+    userDevice: {
+      deleteMany: jest.fn<any>(),
     },
     $transaction: jest.fn<any>(),
   };
@@ -366,7 +370,9 @@ describe('AdminService', () => {
         role: 'USER',
         photos: [{ id: 'ph1', url: 'https://test.com/ph1.jpg', objectKey: 'ph1', storageProvider: 'local' }],
       });
-      mockPrisma.user.delete.mockResolvedValue({ id: 'u1' });
+      mockPrisma.photo.deleteMany.mockResolvedValue({ count: 1 });
+      mockPrisma.user.update.mockResolvedValue({ id: 'u1', status: 'DELETED' });
+      mockPrisma.userDevice.deleteMany.mockResolvedValue({ count: 1 });
 
       const res = await service.purgeUser('u1');
       expect(res.success).toBe(true);
@@ -375,7 +381,14 @@ describe('AdminService', () => {
         objectKey: 'ph1',
         storageProvider: 'local',
       });
-      expect(mockPrisma.user.delete).toHaveBeenCalledWith({ where: { id: 'u1' } });
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'u1' },
+        data: expect.objectContaining({
+          status: 'DELETED',
+          deletedBy: 'ADMIN',
+          isBanned: true,
+        }),
+      });
     });
 
     it('should disallow purging an ADMIN account', async () => {
